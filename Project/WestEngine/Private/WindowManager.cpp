@@ -28,6 +28,9 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 	}
 
 	glfwMakeContextCurrent(m_pWindow);
+
+	glfwSetWindowUserPointer(m_pWindow, this);
+
 	return true;
 }
 

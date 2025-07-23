@@ -17,12 +17,21 @@
     <ClInclude Include="Public\WindowManager.h">
       <Filter>Public</Filter>
     </ClInclude>
+    <ClInclude Include="Public\InputManager.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\Engine.h">
+      <Filter>Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\WestEngine.cpp">
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\WindowManager.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="InputManager.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

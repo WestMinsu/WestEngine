@@ -2,6 +2,7 @@
 #include <memory>
 
 class WindowManager;
+class InputManager;
 
 class WestEngine
 {
@@ -16,7 +17,7 @@ public:
 	void Shutdown();
 
 	WindowManager& GetWindowManager() { return *m_windowManager; }
-
+	InputManager& GetInputManager() { return *m_inputManager; }
 
 private:
 	WestEngine();
@@ -25,4 +26,5 @@ private:
 	bool m_isRunning = true;
 
 	std::unique_ptr<WindowManager> m_windowManager;
+	std::unique_ptr<InputManager> m_inputManager;
 };
