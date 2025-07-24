@@ -11,27 +11,51 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Public\Engine.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\InputManager.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\RenderManager.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\Shader.h">
+      <Filter>Public</Filter>
+    </ClInclude>
     <ClInclude Include="Public\WestEngine.h">
       <Filter>Public</Filter>
     </ClInclude>
     <ClInclude Include="Public\WindowManager.h">
       <Filter>Public</Filter>
     </ClInclude>
-    <ClInclude Include="Public\InputManager.h">
+    <ClInclude Include="Public\VertexBuffer.h">
       <Filter>Public</Filter>
     </ClInclude>
-    <ClInclude Include="Public\Engine.h">
+    <ClInclude Include="Public\VertexArray.h">
       <Filter>Public</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Private\InputManager.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\RenderManager.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\Shader.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
     <ClCompile Include="Private\WestEngine.cpp">
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\WindowManager.cpp">
       <Filter>Private</Filter>
     </ClCompile>
-    <ClCompile Include="InputManager.cpp">
+    <ClCompile Include="Private\VertexBuffer.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\VertexArray.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

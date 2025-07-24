@@ -1,5 +1,5 @@
 #pragma once
-#include <GLFW/glfw3.h>
+struct GLFWwindow;
 
 constexpr int NUM_KEYS = 350; 
 constexpr int NUM_MOUSE_BUTTONS = 8; 

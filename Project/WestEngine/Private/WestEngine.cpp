@@ -1,8 +1,9 @@
 #define GLAD_GL_IMPLEMENTATION
-#include "glad/gl.h"
+#include <glad/gl.h>
 
 #include "Engine.h"
 #include <iostream>
+#include <GLFW/glfw3.h>
 
 WestEngine& WestEngine::GetInstance()
 {

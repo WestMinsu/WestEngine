@@ -1,6 +1,7 @@
 #include "WindowManager.h"
 #include <iostream> 
-
+#include <glad/gl.h>
+#include <GLFW/glfw3.h>
 WindowManager::WindowManager()
 {
 	m_pWindow = nullptr;
@@ -28,6 +29,12 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 	}
 
 	glfwMakeContextCurrent(m_pWindow);
+
+	if (!gladLoadGL(glfwGetProcAddress))
+	{
+		std::cerr << "Error: Failed to initialize GLAD!" << std::endl;
+		return false;
+	}
 
 	glfwSetWindowUserPointer(m_pWindow, this);
 

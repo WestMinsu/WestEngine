@@ -18,6 +18,25 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Public\Engine.h" />
+    <ClInclude Include="Public\InputManager.h" />
+    <ClInclude Include="Public\RenderManager.h" />
+    <ClInclude Include="Public\Shader.h" />
+    <ClInclude Include="Public\VertexArray.h" />
+    <ClInclude Include="Public\VertexBuffer.h" />
+    <ClInclude Include="Public\WestEngine.h" />
+    <ClInclude Include="Public\WindowManager.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Private\InputManager.cpp" />
+    <ClCompile Include="Private\RenderManager.cpp" />
+    <ClCompile Include="Private\Shader.cpp" />
+    <ClCompile Include="Private\VertexArray.cpp" />
+    <ClCompile Include="Private\VertexBuffer.cpp" />
+    <ClCompile Include="Private\WestEngine.cpp" />
+    <ClCompile Include="Private\WindowManager.cpp" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
@@ -130,17 +149,6 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClInclude Include="Public\Engine.h" />
-    <ClInclude Include="Public\InputManager.h" />
-    <ClInclude Include="Public\WestEngine.h" />
-    <ClInclude Include="Public\WindowManager.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="InputManager.cpp" />
-    <ClCompile Include="Private\WestEngine.cpp" />
-    <ClCompile Include="Private\WindowManager.cpp" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
