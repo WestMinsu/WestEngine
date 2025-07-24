@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <glm/glm.hpp>
 typedef unsigned int GLuint;
 typedef unsigned int GLenum;
 
@@ -13,6 +14,8 @@ public:
 
 	void Bind() const;
 	void Unbind() const;
+
+	void SetUniformMat4(const std::string& name, const glm::mat4& matrix);
 
 private:
 	std::string ReadFile(const std::string& filepath);

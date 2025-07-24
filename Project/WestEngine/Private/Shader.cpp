@@ -21,8 +21,6 @@ bool Shader::Load(const std::string& vertPath, const std::string& fragPath)
 {
 	std::string vertSource = ReadFile(vertPath);
 	std::string fragSource = ReadFile(fragPath);
-	std::cout << vertSource << std::endl;
-	std::cout << fragSource << std::endl;
 	if (vertSource.empty() || fragSource.empty())
 	{
 		return false;
@@ -67,6 +65,15 @@ void Shader::Bind() const
 void Shader::Unbind() const
 {
 	glUseProgram(0);
+}
+
+void Shader::SetUniformMat4(const std::string& name, const glm::mat4& matrix)
+{
+	GLint location = glGetUniformLocation(m_programID, name.c_str());
+	if (location != -1)
+	{
+		glUniformMatrix4fv(location, 1, GL_FALSE, &matrix[0][0]);
+	}
 }
 
 std::string Shader::ReadFile(const std::string& filepath)
