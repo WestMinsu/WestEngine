@@ -22,5 +22,6 @@ public:
 	GLFWwindow* GetWindowHandle() const { return m_pWindow; }
 
 private:
+	static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 	GLFWwindow* m_pWindow;
 };

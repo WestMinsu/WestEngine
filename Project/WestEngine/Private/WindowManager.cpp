@@ -1,7 +1,9 @@
 #include "WindowManager.h"
-#include <iostream> 
+
+#include <Debug.h>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
+
 WindowManager::WindowManager()
 {
 	m_pWindow = nullptr;
@@ -16,14 +18,18 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 {
 	if (!glfwInit())
 	{
-		std::cerr << "Error: Failed to initialize GLFW!" << std::endl;
+		WEST_ERR("Error: Failed to initialize GLFW!");
 		return false;
 	}
+
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
 	m_pWindow = glfwCreateWindow(width, height, title.c_str(), NULL, NULL);
 	if (!m_pWindow)
 	{
-		std::cerr << "Error: Failed to create GLFW window!" << std::endl;
+		WEST_ERR("Error: Failed to create GLFW window!");
 		glfwTerminate();
 		return false;
 	}
@@ -32,11 +38,13 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 
 	if (!gladLoadGL(glfwGetProcAddress))
 	{
-		std::cerr << "Error: Failed to initialize GLAD!" << std::endl;
+		WEST_ERR("Error: Failed to initialize GLAD!");
 		return false;
 	}
 
+
 	glfwSetWindowUserPointer(m_pWindow, this);
+	glfwSetFramebufferSizeCallback(m_pWindow, FramebufferSizeCallback);
 
 	return true;
 }
@@ -70,4 +78,10 @@ void WindowManager::Clear()
 bool WindowManager::ShouldClose() const
 {
 	return glfwWindowShouldClose(m_pWindow);
+}
+
+void WindowManager::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
+{
+	WEST_INFO("framebuffer size changed: (" << width << " * " << height << ")");
+	glViewport(0, 0, width, height);
 }

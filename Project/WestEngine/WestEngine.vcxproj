@@ -19,6 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
     <ClInclude Include="Public\InputManager.h" />
     <ClInclude Include="Public\RenderManager.h" />
