@@ -46,7 +46,7 @@ bool Shader::Load(const std::string& vertPath, const std::string& fragPath)
 	{
 		char infoLog[512];
 		glGetProgramInfoLog(m_programID, 512, NULL, infoLog);
-		WEST_ERR("Error: Shader program linking failed!\n" << infoLog);
+		WEST_ERR("Shader program linking failed!\n" << infoLog);
 		glDeleteProgram(m_programID);
 		m_programID = 0;
 		return false;
@@ -82,8 +82,8 @@ std::string Shader::ReadFile(const std::string& filepath)
 	std::ifstream file(filepath);
 	if (!file.is_open())
 	{
-		WEST_ERR("Error: Could not open shader file: " << filepath << std::endl);
-		return "";
+		WEST_ERR("Could not open shader file: " << filepath << std::endl);
+		return {};
 	}
 	std::stringstream buffer;
 	buffer << file.rdbuf();
@@ -103,7 +103,7 @@ GLuint Shader::CompileShader(GLenum type, const std::string& source)
 	{
 		char infoLog[512];
 		glGetShaderInfoLog(shader, 512, NULL, infoLog);
-		WEST_ERR("Error: Shader compilation failed! Type: " << type << "\n" << infoLog << std::endl);
+		WEST_ERR("Shader compilation failed! Type: " << type << "\n" << infoLog << std::endl);
 		glDeleteShader(shader);
 		return 0;
 	}

@@ -18,7 +18,7 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 {
 	if (!glfwInit())
 	{
-		WEST_ERR("Error: Failed to initialize GLFW!");
+		WEST_ERR("Failed to initialize GLFW!");
 		return false;
 	}
 
@@ -29,7 +29,7 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 	m_pWindow = glfwCreateWindow(width, height, title.c_str(), NULL, NULL);
 	if (!m_pWindow)
 	{
-		WEST_ERR("Error: Failed to create GLFW window!");
+		WEST_ERR("Failed to create GLFW window!");
 		glfwTerminate();
 		return false;
 	}
@@ -38,11 +38,11 @@ bool WindowManager::Init(int width, int height, const std::string& title)
 
 	if (!gladLoadGL(glfwGetProcAddress))
 	{
-		WEST_ERR("Error: Failed to initialize GLAD!");
+		WEST_ERR("Failed to initialize GLAD!");
 		return false;
 	}
 
-
+	glViewport(0, 0, width, height);
 	glfwSetWindowUserPointer(m_pWindow, this);
 	glfwSetFramebufferSizeCallback(m_pWindow, FramebufferSizeCallback);
 

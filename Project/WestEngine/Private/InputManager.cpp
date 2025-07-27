@@ -1,4 +1,6 @@
 #include "InputManager.h"
+#include "Debug.h"
+
 #include <GLFW/glfw3.h>
 
 InputManager* InputManager::s_pInstance = nullptr;
@@ -71,7 +73,7 @@ bool InputManager::IsMouseButtonTriggered(int button)
 
 bool InputManager::IsMouseButtonReleased(int button)
 {
-    return !m_currMouseButtonState[button] && m_prevMouseButtonState[button];
+	return !m_currMouseButtonState[button] && m_prevMouseButtonState[button];
 }
 
 void InputManager::GetMousePosition(double& x, double& y)
@@ -82,6 +84,24 @@ void InputManager::GetMousePosition(double& x, double& y)
 
 void InputManager::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
+	WEST_INFO
+	(
+		"key: " << key << ", " <<
+
+		"scancode: " << scancode << ", " <<
+
+		"action: " << (action == GLFW_PRESS ? "Pressed" :
+			action == GLFW_RELEASE ? "Released" :
+			action == GLFW_REPEAT ? "Repeat" : "Unknown") << ", " <<
+
+		"mods: " << (mods & GLFW_MOD_CONTROL ? "C" : "-") <<
+		(mods & GLFW_MOD_SHIFT ? "S" : "-") <<
+		(mods & GLFW_MOD_ALT ? "A" : "-")
+	);
+
+	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+
 	if (key >= 0 && key < NUM_KEYS)
 	{
 		if (action == GLFW_PRESS)
@@ -101,7 +121,7 @@ void InputManager::MouseButtonCallback(GLFWwindow* window, int button, int actio
 	{
 		if (action == GLFW_PRESS)
 		{
-			s_pInstance->m_currMouseButtonState[button] = true;	
+			s_pInstance->m_currMouseButtonState[button] = true;
 		}
 		else if (action == GLFW_RELEASE)
 		{

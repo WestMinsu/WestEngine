@@ -4,8 +4,8 @@
 #ifdef _DEBUG
 #define FILENAME (strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__)
 
-#define WEST_INFO(x) std::cout << "[INFO] " << FILENAME << ":" << __LINE__ << " - " << x << std::endl
-#define WEST_ERR(x) std::cerr << "[ERR] " << FILENAME << ":" << __LINE__ << " - " << x << std::endl
+#define WEST_INFO(x) std::cout << "[INFO] " << "[" << FILENAME << ":" << __LINE__ << "] " << x << std::endl
+#define WEST_ERR(x) std::cerr << "[ERR] " << "[" << FILENAME << ":" << __LINE__ << "] " << x << std::endl
 
 #else
 
