@@ -77,6 +77,11 @@ void Shader::SetUniformMat4(const std::string& name, const glm::mat4& matrix)
 	}
 }
 
+GLuint Shader::GetProgramID()
+{
+	return m_programID;
+}
+
 std::string Shader::ReadFile(const std::string& filepath)
 {
 	std::ifstream file(filepath);

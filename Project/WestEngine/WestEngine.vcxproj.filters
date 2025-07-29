@@ -38,6 +38,12 @@
     <ClInclude Include="Public\Debug.h">
       <Filter>Public</Filter>
     </ClInclude>
+    <ClInclude Include="Public\Texture.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\IndexBuffer.h">
+      <Filter>Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\InputManager.cpp">
@@ -59,6 +65,12 @@
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\VertexArray.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\Texture.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\IndexBuffer.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

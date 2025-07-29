@@ -21,18 +21,22 @@
   <ItemGroup>
     <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
+    <ClInclude Include="Public\IndexBuffer.h" />
     <ClInclude Include="Public\InputManager.h" />
     <ClInclude Include="Public\RenderManager.h" />
     <ClInclude Include="Public\Shader.h" />
+    <ClInclude Include="Public\Texture.h" />
     <ClInclude Include="Public\VertexArray.h" />
     <ClInclude Include="Public\VertexBuffer.h" />
     <ClInclude Include="Public\WestEngine.h" />
     <ClInclude Include="Public\WindowManager.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />
     <ClCompile Include="Private\Shader.cpp" />
+    <ClCompile Include="Private\Texture.cpp" />
     <ClCompile Include="Private\VertexArray.cpp" />
     <ClCompile Include="Private\VertexBuffer.cpp" />
     <ClCompile Include="Private\WestEngine.cpp" />
