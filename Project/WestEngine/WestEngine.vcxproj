@@ -19,6 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Public\Animation.h" />
     <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
     <ClInclude Include="Public\IndexBuffer.h" />
@@ -33,6 +34,7 @@
     <ClInclude Include="Public\WindowManager.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Private\Animation.cpp" />
     <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />

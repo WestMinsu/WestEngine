@@ -17,6 +17,8 @@ public:
 	void Unbind() const;
 
 	void SetUniformMat4(const std::string& name, const glm::mat4& matrix);
+	void SetUniformVec2(const std::string& name, const glm::vec2& value);
+
 	GLuint GetProgramID();
 
 private:
