@@ -44,6 +44,9 @@
     <ClInclude Include="Public\IndexBuffer.h">
       <Filter>Public</Filter>
     </ClInclude>
+    <ClInclude Include="Public\SpriteRenderer.h">
+      <Filter>Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\InputManager.cpp">
@@ -71,6 +74,9 @@
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\IndexBuffer.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\SpriteRenderer.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>
