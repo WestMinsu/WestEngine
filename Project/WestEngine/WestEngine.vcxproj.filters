@@ -74,6 +74,9 @@
     <ClInclude Include="Public\AnimationTypes.h">
       <Filter>Public</Filter>
     </ClInclude>
+    <ClInclude Include="Public\Scene.h">
+      <Filter>Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\InputManager.cpp">
@@ -122,6 +125,9 @@
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\SpriteAnimatorComponent.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\Scene.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

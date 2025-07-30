@@ -18,7 +18,6 @@ void SpriteRenderer::Init(Shader* shader)
 	m_shader = shader;
 
 	std::vector<float> vertices = {
-		// pos      // tex
 		-0.5f, -0.5f, 0.0f, 0.0f, 0.0f,
 		 0.5f, -0.5f, 0.0f, 1.0f, 0.0f,
 		 0.5f,  0.5f, 0.0f, 1.0f, 1.0f,
@@ -74,8 +73,6 @@ void SpriteRenderer::DrawAnimatedSprite(Texture& texture, Animation& animation, 
 	model = glm::scale(model, glm::vec3(size, 1.0f));
 
 	m_shader->SetUniformMat4("model", model);
-
-	// 애니메이션은 Animation 객체로부터 UV 값을 받아와 셰이더로 전송
 	m_shader->SetUniformVec2("uvOffset", animation.GetUVOffset());
 	m_shader->SetUniformVec2("uvScale", animation.GetUVScale());
 
