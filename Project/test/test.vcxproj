@@ -142,11 +142,16 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="MainGameState.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\WestEngine\WestEngine.vcxproj">
       <Project>{9049f7ca-7a89-427e-9b9b-50837baa0f35}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="GameTypes.h" />
+    <ClInclude Include="MainGameState.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

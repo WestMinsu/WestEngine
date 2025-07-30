@@ -50,6 +50,30 @@
     <ClInclude Include="Public\Animation.h">
       <Filter>Public</Filter>
     </ClInclude>
+    <ClInclude Include="Public\Component.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\Transform.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\Gameobject.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\SpriteRendererComponent.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\IGameState.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\StateManager.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\SpriteAnimatorComponent.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\AnimationTypes.h">
+      <Filter>Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\InputManager.cpp">
@@ -83,6 +107,21 @@
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\Animation.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\Transform.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\GameObject.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\SpriteRendererComponent.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\StateManager.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\SpriteAnimatorComponent.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

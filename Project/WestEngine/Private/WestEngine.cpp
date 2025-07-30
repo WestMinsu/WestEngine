@@ -5,6 +5,11 @@
 #include <iostream>
 #include <GLFW/glfw3.h>
 
+#include "GameObject.h"
+#include "SpriteRendererComponent.h"
+#include "Texture.h"
+#include <glm/gtc/matrix_transform.hpp>
+
 WestEngine& WestEngine::GetInstance()
 {
 	static WestEngine instance;
@@ -15,38 +20,42 @@ WestEngine::WestEngine()
 {
 	m_windowManager = std::make_unique<WindowManager>();
 	m_inputManager = std::make_unique<InputManager>();
+	m_renderManager = std::make_unique<RenderManager>();
+	m_spriteRenderer = std::make_unique<SpriteRenderer>();
+	m_stateManager = std::make_unique<StateManager>();
 }
 
-WestEngine::~WestEngine()
-{
-}
+WestEngine::~WestEngine() {}
 
 void WestEngine::Init()
 {
-	m_windowManager->Init(1600, 900, "Hello World!");
+	m_windowManager->Init(1600, 900, "WestEngine");
 	m_inputManager->Init(m_windowManager->GetWindowHandle());
+	m_renderManager->Init();
+	m_renderManager->LoadShader("sprite", "Shaders/sprite.vert", "Shaders/sprite.frag");
+	m_spriteRenderer->Init(m_renderManager->GetShader("sprite"));
 }
 
 void WestEngine::Run()
 {
 	while (m_isRunning)
 	{
-		m_windowManager->PollEvents();
-	
-		if (m_inputManager->IsKeyTriggered(GLFW_KEY_SPACE))
-		{
-			std::cout << "Space key triggered!" << std::endl;
-		}
-		if (m_inputManager->IsMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT))
-		{
-			double x, y;
-			m_inputManager->GetMousePosition(x, y);
-			std::cout << "Left mouse button pressed at: " << x << ", " << y << std::endl;
-		}
+		static float lastTime = 0.f;
+		float currentTime = static_cast<float>(glfwGetTime());
+		float deltaTime = currentTime - lastTime;
+		lastTime = currentTime;
 
+		m_windowManager->PollEvents();
 		m_inputManager->Update();
 
-		m_windowManager->Clear();
+		m_stateManager->Update(deltaTime);
+
+		m_renderManager->BeginFrame();
+		m_renderManager->Clear(0.1f, 0.1f, 0.3f, 1.0f);
+
+		m_stateManager->Draw();
+
+		m_renderManager->EndFrame();
 		m_windowManager->SwapBuffers();
 
 		if (m_windowManager->ShouldClose())
@@ -56,5 +65,7 @@ void WestEngine::Run()
 
 void WestEngine::Shutdown()
 {
+	m_spriteRenderer->Shutdown();
+	m_renderManager->Shutdown();
 	m_windowManager->Shutdown();
 }

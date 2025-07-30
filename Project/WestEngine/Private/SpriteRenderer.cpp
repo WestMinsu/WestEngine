@@ -1,7 +1,7 @@
 #include "SpriteRenderer.h"
+#include "IndexBuffer.h"
 #include <vector>
 #include <glm/gtc/matrix_transform.hpp>
-#include "IndexBuffer.h"
 #include "glad/gl.h"
 
 SpriteRenderer::SpriteRenderer()
@@ -18,6 +18,7 @@ void SpriteRenderer::Init(Shader* shader)
 	m_shader = shader;
 
 	std::vector<float> vertices = {
+		// pos      // tex
 		-0.5f, -0.5f, 0.0f, 0.0f, 0.0f,
 		 0.5f, -0.5f, 0.0f, 1.0f, 0.0f,
 		 0.5f,  0.5f, 0.0f, 1.0f, 1.0f,
@@ -45,41 +46,41 @@ void SpriteRenderer::DrawSprite(Texture& texture, const glm::vec2& position, con
 	m_shader->Bind();
 
 	glm::mat4 model = glm::mat4(1.0f);
-
 	model = glm::translate(model, glm::vec3(position, 0.0f));
-	model = glm::translate(model, glm::vec3(0.5f * size.x, 0.5f * size.y, 0.0f));
 	model = glm::rotate(model, glm::radians(rotate), glm::vec3(0.0f, 0.0f, 1.0f));
-	model = glm::translate(model, glm::vec3(-0.5f * size.x, -0.5f * size.y, 0.0f));
 	model = glm::scale(model, glm::vec3(size, 1.0f));
 
 	m_shader->SetUniformMat4("model", model);
 
-	glUniform1i(glGetUniformLocation(m_shader->GetProgramID(), "u_Texture"), 0);
+	m_shader->SetUniformVec2("uvOffset", glm::vec2(0.0f, 0.0f));
+	m_shader->SetUniformVec2("uvScale", glm::vec2(1.0f, 1.0f));
+
+	texture.Bind(0);
+	m_shader->SetUniform1i("u_Texture", 0);
 
 	m_quadVAO->Bind();
 	glDrawElements(GL_TRIANGLES, m_quadVAO->GetIndexBuffer()->GetCount(), GL_UNSIGNED_INT, 0);
 	m_quadVAO->Unbind();
 }
 
+
 void SpriteRenderer::DrawAnimatedSprite(Texture& texture, Animation& animation, const glm::vec2& position, const glm::vec2& size, float rotate, const glm::vec4& color)
 {
 	m_shader->Bind();
 
 	glm::mat4 model = glm::mat4(1.0f);
-
 	model = glm::translate(model, glm::vec3(position, 0.0f));
-	model = glm::translate(model, glm::vec3(0.5f * size.x, 0.5f * size.y, 0.0f));
 	model = glm::rotate(model, glm::radians(rotate), glm::vec3(0.0f, 0.0f, 1.0f));
-	model = glm::translate(model, glm::vec3(-0.5f * size.x, -0.5f * size.y, 0.0f));
 	model = glm::scale(model, glm::vec3(size, 1.0f));
-
-	m_shader->SetUniformVec2("uvOffset", animation.GetUVOffset());
-	m_shader->SetUniformVec2("uvScale", animation.GetUVScale());
 
 	m_shader->SetUniformMat4("model", model);
 
+	// 애니메이션은 Animation 객체로부터 UV 값을 받아와 셰이더로 전송
+	m_shader->SetUniformVec2("uvOffset", animation.GetUVOffset());
+	m_shader->SetUniformVec2("uvScale", animation.GetUVScale());
+
 	texture.Bind(0);
-	glUniform1i(glGetUniformLocation(m_shader->GetProgramID(), "u_Texture"), 0);
+	m_shader->SetUniform1i("u_Texture", 0);
 
 	m_quadVAO->Bind();
 	glDrawElements(GL_TRIANGLES, m_quadVAO->GetIndexBuffer()->GetCount(), GL_UNSIGNED_INT, 0);

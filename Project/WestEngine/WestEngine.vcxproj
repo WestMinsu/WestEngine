@@ -20,14 +20,22 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Public\Animation.h" />
+    <ClInclude Include="Public\AnimationTypes.h" />
+    <ClInclude Include="Public\Component.h" />
     <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
+    <ClInclude Include="Public\Gameobject.h" />
+    <ClInclude Include="Public\IGameState.h" />
     <ClInclude Include="Public\IndexBuffer.h" />
     <ClInclude Include="Public\InputManager.h" />
     <ClInclude Include="Public\RenderManager.h" />
     <ClInclude Include="Public\Shader.h" />
+    <ClInclude Include="Public\SpriteAnimatorComponent.h" />
     <ClInclude Include="Public\SpriteRenderer.h" />
+    <ClInclude Include="Public\SpriteRendererComponent.h" />
+    <ClInclude Include="Public\StateManager.h" />
     <ClInclude Include="Public\Texture.h" />
+    <ClInclude Include="Public\Transform.h" />
     <ClInclude Include="Public\VertexArray.h" />
     <ClInclude Include="Public\VertexBuffer.h" />
     <ClInclude Include="Public\WestEngine.h" />
@@ -35,12 +43,17 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\Animation.cpp" />
+    <ClCompile Include="Private\GameObject.cpp" />
     <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />
     <ClCompile Include="Private\Shader.cpp" />
+    <ClCompile Include="Private\SpriteAnimatorComponent.cpp" />
     <ClCompile Include="Private\SpriteRenderer.cpp" />
+    <ClCompile Include="Private\SpriteRendererComponent.cpp" />
+    <ClCompile Include="Private\StateManager.cpp" />
     <ClCompile Include="Private\Texture.cpp" />
+    <ClCompile Include="Private\Transform.cpp" />
     <ClCompile Include="Private\VertexArray.cpp" />
     <ClCompile Include="Private\VertexBuffer.cpp" />
     <ClCompile Include="Private\WestEngine.cpp" />
