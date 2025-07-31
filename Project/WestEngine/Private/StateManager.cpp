@@ -9,7 +9,7 @@ StateManager::~StateManager()
 	}
 }
 
-void StateManager::PushState(std::unique_ptr<Scene> state)
+void StateManager::PushState(std::unique_ptr<IGameState> state)
 {
 	m_states.push_back(std::move(state));
 	m_states.back()->Init();
@@ -24,7 +24,7 @@ void StateManager::PopState()
 	}
 }
 
-void StateManager::ChangeState(std::unique_ptr<Scene> state)
+void StateManager::ChangeState(std::unique_ptr<IGameState> state)
 {
 	if (!m_states.empty())
 	{
@@ -33,7 +33,7 @@ void StateManager::ChangeState(std::unique_ptr<Scene> state)
 	PushState(std::move(state));
 }
 
-void StateManager::Update(float dt)
+void StateManager::Update(float dt) 
 {
 	if (!m_states.empty())
 	{

@@ -142,7 +142,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="TestScene.cpp" />
+    <ClCompile Include="MainGameState.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\WestEngine\WestEngine.vcxproj">
@@ -151,7 +151,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GameTypes.h" />
-    <ClInclude Include="TestScene.h" />
+    <ClInclude Include="MainGameState.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
