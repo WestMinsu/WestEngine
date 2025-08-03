@@ -7,3 +7,6 @@
 #include "StateManager.h"
 #include "SpriteRenderer.h"
 #include "VertexArray.h"
+#include "SpriteAnimatorComponent.h" 
+#include "SpriteRendererComponent.h"
+#include "Camera2D.h"

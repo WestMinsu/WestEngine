@@ -22,6 +22,7 @@
     <ClInclude Include="Public\Animation.h" />
     <ClInclude Include="Public\AnimationTypes.h" />
     <ClInclude Include="Public\Camera2D.h" />
+    <ClInclude Include="Public\HealthComponent.h" />
     <ClInclude Include="Public\IComponent.h" />
     <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
@@ -29,7 +30,6 @@
     <ClInclude Include="Public\IGameState.h" />
     <ClInclude Include="Public\IndexBuffer.h" />
     <ClInclude Include="Public\InputManager.h" />
-    <ClInclude Include="Public\PlayerControllerComponent.h" />
     <ClInclude Include="Public\RenderManager.h" />
     <ClInclude Include="Public\Shader.h" />
     <ClInclude Include="Public\SpriteAnimatorComponent.h" />
@@ -47,9 +47,9 @@
     <ClCompile Include="Private\Animation.cpp" />
     <ClCompile Include="Private\Camera2D.cpp" />
     <ClCompile Include="Private\GameObject.cpp" />
+    <ClCompile Include="Private\HealthComponent.cpp" />
     <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
-    <ClCompile Include="Private\PlayerControllerComponent.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />
     <ClCompile Include="Private\Shader.cpp" />
     <ClCompile Include="Private\SpriteAnimatorComponent.cpp" />

@@ -141,8 +141,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="CharacterStatsComponent.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainGameState.cpp" />
+    <ClCompile Include="PlayerControllerComponent.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\WestEngine\WestEngine.vcxproj">
@@ -150,8 +152,10 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CharacterStatsComponent.h" />
     <ClInclude Include="GameTypes.h" />
     <ClInclude Include="MainGameState.h" />
+    <ClInclude Include="PlayerControllerComponent.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

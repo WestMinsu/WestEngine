@@ -77,7 +77,7 @@
     <ClInclude Include="Public\Camera2D.h">
       <Filter>Public</Filter>
     </ClInclude>
-    <ClInclude Include="Public\PlayerControllerComponent.h">
+    <ClInclude Include="Public\HealthComponent.h">
       <Filter>Public</Filter>
     </ClInclude>
   </ItemGroup>
@@ -133,7 +133,7 @@
     <ClCompile Include="Private\Camera2D.cpp">
       <Filter>Private</Filter>
     </ClCompile>
-    <ClCompile Include="Private\PlayerControllerComponent.cpp">
+    <ClCompile Include="Private\HealthComponent.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

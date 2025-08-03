@@ -1,11 +1,8 @@
 #include "MainGameState.h"
 #include "WestEngine.h"
-#include "InputManager.h"
-#include "RenderManager.h"
-#include "SpriteAnimatorComponent.h" 
-#include "Camera2D.h"
+#include "Engine.h"
+#include "PlayerControllerComponent.h"
 #include <glm/gtc/matrix_transform.hpp>
-#include <SpriteRendererComponent.h>
 
 MainGameState::MainGameState()
 {
@@ -26,7 +23,7 @@ void MainGameState::Init()
 	m_playerIdleTexture->Load("Assets/Battlemage Idle.png"); 
 
 	m_playerObject = std::make_unique<GameObject>();
-	m_playerObject->GetTransform().SetPosition({ 640.f, 360.f });
+	m_playerObject->GetTransform().SetPosition({ 0.f, 0.f });
 	m_playerObject->GetTransform().SetScale({ 200.f, 200.f });
 
 	auto* animator = m_playerObject->AddComponent<SpriteAnimatorComponent>();
@@ -38,29 +35,18 @@ void MainGameState::Init()
 	idleClip.loop = true;
 	animator->AddClip("idle", idleClip);
 	animator->Play("idle");
+
+	m_playerObject->AddComponent<PlayerControllerComponent>();
 }
 
 void MainGameState::Update(float dt)
 {
-	InputManager& input = WestEngine::GetInstance().GetInputManager();
 
-	float moveSpeed = 300.f * dt;
-	Transform& playerTransform = m_playerObject->GetTransform();
-	glm::vec2 currentPos = playerTransform.GetPosition();
 
-	if (input.IsKeyPressed(KEY_W))
-		currentPos.y += moveSpeed;
-	if (input.IsKeyPressed(KEY_S))
-		currentPos.y -= moveSpeed;
-	if (input.IsKeyPressed(KEY_A))
-		currentPos.x -= moveSpeed;
-	if (input.IsKeyPressed(KEY_D))
-		currentPos.x += moveSpeed;
-
-	playerTransform.SetPosition(currentPos);
+	//playerTransform.SetPosition(currentPos);
 	m_playerObject->Update(dt);
-	
-	m_camera->SetPosition(playerTransform.GetPosition());
+	//
+	//m_camera->SetPosition(playerTransform.GetPosition());
 
 	m_testObjectTexture = std::make_unique<Texture>();
 	m_testObjectTexture->Load("Assets/stone.png"); 
