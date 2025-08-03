@@ -21,8 +21,14 @@ void RenderManager::Shutdown()
 	m_shaders.clear(); 
 }
 
-void RenderManager::BeginFrame()
+void RenderManager::BeginFrame(Camera2D& camera)
 {
+	camera.Update();
+	for (auto const& [tag, shader] : m_shaders)
+	{
+		shader->Bind();
+		shader->SetUniformMat4("projection", camera.GetProjectionMatrix());
+	}
 }
 
 void RenderManager::EndFrame()

@@ -1,5 +1,5 @@
 #pragma once
-#include "Component.h"
+#include "IComponent.h"
 #include "Texture.h"
 //#include "SpriteRenderer.h"
 //#include <memory>

@@ -3,6 +3,7 @@
 #include <map>
 #include <memory>
 #include "Shader.h"
+#include "Camera2D.h"
 
 class RenderManager
 {
@@ -13,7 +14,7 @@ public:
 	void Init();
 	void Shutdown();
 
-	void BeginFrame();
+	void BeginFrame(Camera2D& camera);
 	void EndFrame();
 	void Clear(float r, float g, float b, float a);
 

@@ -50,7 +50,6 @@ void SpriteRenderer::DrawSprite(Texture& texture, const glm::vec2& position, con
 	model = glm::scale(model, glm::vec3(size, 1.0f));
 
 	m_shader->SetUniformMat4("model", model);
-
 	m_shader->SetUniformVec2("uvOffset", glm::vec2(0.0f, 0.0f));
 	m_shader->SetUniformVec2("uvScale", glm::vec2(1.0f, 1.0f));
 

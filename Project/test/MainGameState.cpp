@@ -3,12 +3,15 @@
 #include "InputManager.h"
 #include "RenderManager.h"
 #include "SpriteAnimatorComponent.h" 
+#include "Camera2D.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <SpriteRendererComponent.h>
 
 MainGameState::MainGameState()
 {
 	m_playerObject = nullptr;
 	m_playerIdleTexture = nullptr;
+	m_camera = nullptr;
 }
 
 MainGameState::~MainGameState()
@@ -17,6 +20,8 @@ MainGameState::~MainGameState()
 
 void MainGameState::Init()
 {
+	m_camera = std::make_unique<Camera2D>(1600.0f, 900.0f);
+
 	m_playerIdleTexture = std::make_unique<Texture>();
 	m_playerIdleTexture->Load("Assets/Battlemage Idle.png"); 
 
@@ -53,20 +58,30 @@ void MainGameState::Update(float dt)
 		currentPos.x += moveSpeed;
 
 	playerTransform.SetPosition(currentPos);
-
 	m_playerObject->Update(dt);
+	
+	m_camera->SetPosition(playerTransform.GetPosition());
+
+	m_testObjectTexture = std::make_unique<Texture>();
+	m_testObjectTexture->Load("Assets/stone.png"); 
+
+	m_staticTestObject = std::make_unique<GameObject>();
+	m_staticTestObject->GetTransform().SetPosition({ 1000.f, 360.f }); 
+	m_staticTestObject->GetTransform().SetScale({ 100.f, 100.f });
+
+	auto* spriteComp = m_staticTestObject->AddComponent<SpriteRendererComponent>();
+	spriteComp->SetTexture(m_testObjectTexture.get());
 }
 
 void MainGameState::Draw()
 {
 	RenderManager& renderer = WestEngine::GetInstance().GetRenderManager();
-	Shader* spriteShader = renderer.GetShader("sprite");
-	if (spriteShader)
-	{
-		spriteShader->Bind();
-		glm::mat4 projection = glm::ortho(0.0f, 1600.0f, 0.0f, 900.0f, -1.0f, 1.0f);
-		spriteShader->SetUniformMat4("projection", projection);
-	}
+
+	renderer.BeginFrame(*m_camera);
+	
+	renderer.Clear(0.1f, 0.1f, 0.3f, 1.0f);
+
+	m_staticTestObject->Draw();
 
 	m_playerObject->Draw();
 }

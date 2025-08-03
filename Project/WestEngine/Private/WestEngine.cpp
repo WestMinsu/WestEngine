@@ -39,7 +39,7 @@ void WestEngine::Init()
 void WestEngine::Run()
 {
 	while (m_isRunning)
-	{
+	{	
 		static float lastTime = 0.f;
 		float currentTime = static_cast<float>(glfwGetTime());
 		float deltaTime = currentTime - lastTime;
@@ -50,12 +50,8 @@ void WestEngine::Run()
 
 		m_stateManager->Update(deltaTime);
 
-		m_renderManager->BeginFrame();
-		m_renderManager->Clear(0.1f, 0.1f, 0.3f, 1.0f);
-
 		m_stateManager->Draw();
-
-		m_renderManager->EndFrame();
+	
 		m_windowManager->SwapBuffers();
 
 		if (m_windowManager->ShouldClose())

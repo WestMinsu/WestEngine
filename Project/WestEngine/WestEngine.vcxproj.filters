@@ -50,7 +50,7 @@
     <ClInclude Include="Public\Animation.h">
       <Filter>Public</Filter>
     </ClInclude>
-    <ClInclude Include="Public\Component.h">
+    <ClInclude Include="Public\IComponent.h">
       <Filter>Public</Filter>
     </ClInclude>
     <ClInclude Include="Public\Transform.h">
@@ -72,6 +72,12 @@
       <Filter>Public</Filter>
     </ClInclude>
     <ClInclude Include="Public\AnimationTypes.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\Camera2D.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\PlayerControllerComponent.h">
       <Filter>Public</Filter>
     </ClInclude>
   </ItemGroup>
@@ -122,6 +128,12 @@
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\SpriteAnimatorComponent.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\Camera2D.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\PlayerControllerComponent.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

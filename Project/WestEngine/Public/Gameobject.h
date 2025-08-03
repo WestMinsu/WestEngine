@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
 #include <memory>
-#include "Component.h"
+#include "IComponent.h"
 #include "Transform.h"
 
 class GameObject

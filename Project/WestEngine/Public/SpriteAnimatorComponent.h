@@ -1,5 +1,5 @@
 #pragma once
-#include "Component.h"
+#include "IComponent.h"
 #include "Animation.h"
 #include "AnimationTypes.h" 
 #include <map>
