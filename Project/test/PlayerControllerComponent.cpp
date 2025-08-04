@@ -32,7 +32,10 @@ void PlayerControllerComponent::Update(float dt)
 	if (m_isGrounded)
 	{
 		if (input.IsKeyPressed(KEY_A))
+		{
+			m_owner->GetComponent<AudioSourceComponent>()->Play("footstep");
 			m_velocityX = -currentSpeed;
+		}
 		else if (input.IsKeyPressed(KEY_D))
 			m_velocityX = currentSpeed;
 		else

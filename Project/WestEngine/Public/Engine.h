@@ -10,3 +10,5 @@
 #include "SpriteAnimatorComponent.h" 
 #include "SpriteRendererComponent.h"
 #include "Camera2D.h"
+#include "SoundManager.h"
+#include "AudioSourceComponent.h"

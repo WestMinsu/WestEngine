@@ -23,6 +23,7 @@ WestEngine::WestEngine()
 	m_renderManager = std::make_unique<RenderManager>();
 	m_spriteRenderer = std::make_unique<SpriteRenderer>();
 	m_stateManager = std::make_unique<StateManager>();
+	m_soundManager = std::make_unique<SoundManager>();
 }
 
 WestEngine::~WestEngine() {}
@@ -34,6 +35,7 @@ void WestEngine::Init()
 	m_renderManager->Init();
 	m_renderManager->LoadShader("sprite", "Shaders/sprite.vert", "Shaders/sprite.frag");
 	m_spriteRenderer->Init(m_renderManager->GetShader("sprite"));
+	m_soundManager->Init();
 }
 
 void WestEngine::Run()

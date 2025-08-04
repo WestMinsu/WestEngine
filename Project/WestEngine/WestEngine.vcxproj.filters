@@ -77,7 +77,10 @@
     <ClInclude Include="Public\Camera2D.h">
       <Filter>Public</Filter>
     </ClInclude>
-    <ClInclude Include="Public\HealthComponent.h">
+    <ClInclude Include="Public\SoundManager.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Public\AudioSourceComponent.h">
       <Filter>Public</Filter>
     </ClInclude>
   </ItemGroup>
@@ -133,7 +136,10 @@
     <ClCompile Include="Private\Camera2D.cpp">
       <Filter>Private</Filter>
     </ClCompile>
-    <ClCompile Include="Private\HealthComponent.cpp">
+    <ClCompile Include="Private\SoundManager.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\AudioSourceComponent.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>

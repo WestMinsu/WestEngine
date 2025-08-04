@@ -21,9 +21,6 @@
     <ClCompile Include="MainGameState.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="CharacterStatsComponent.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="PlayerControllerComponent.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

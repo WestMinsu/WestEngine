@@ -36,6 +36,9 @@ void MainGameState::Init()
 	animator->AddClip("idle", idleClip);
 	animator->Play("idle");
 
+	auto* audioSource = m_playerObject->AddComponent<AudioSourceComponent>();
+	audioSource->AddSound("footstep", "Assets/die_boss.wav");
+
 	m_playerObject->AddComponent<PlayerControllerComponent>();
 }
 

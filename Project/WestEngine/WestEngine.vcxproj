@@ -21,8 +21,8 @@
   <ItemGroup>
     <ClInclude Include="Public\Animation.h" />
     <ClInclude Include="Public\AnimationTypes.h" />
+    <ClInclude Include="Public\AudioSourceComponent.h" />
     <ClInclude Include="Public\Camera2D.h" />
-    <ClInclude Include="Public\HealthComponent.h" />
     <ClInclude Include="Public\IComponent.h" />
     <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
@@ -32,6 +32,7 @@
     <ClInclude Include="Public\InputManager.h" />
     <ClInclude Include="Public\RenderManager.h" />
     <ClInclude Include="Public\Shader.h" />
+    <ClInclude Include="Public\SoundManager.h" />
     <ClInclude Include="Public\SpriteAnimatorComponent.h" />
     <ClInclude Include="Public\SpriteRenderer.h" />
     <ClInclude Include="Public\SpriteRendererComponent.h" />
@@ -45,13 +46,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\Animation.cpp" />
+    <ClCompile Include="Private\AudioSourceComponent.cpp" />
     <ClCompile Include="Private\Camera2D.cpp" />
     <ClCompile Include="Private\GameObject.cpp" />
-    <ClCompile Include="Private\HealthComponent.cpp" />
     <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />
     <ClCompile Include="Private\Shader.cpp" />
+    <ClCompile Include="Private\SoundManager.cpp" />
     <ClCompile Include="Private\SpriteAnimatorComponent.cpp" />
     <ClCompile Include="Private\SpriteRenderer.cpp" />
     <ClCompile Include="Private\SpriteRendererComponent.cpp" />
@@ -115,13 +117,22 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\BCA-PC1\Desktop\WestEngine\Project\WestEngine\Dependencies\fmod\lib\x64;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>$(ProjectDir)Dependencies\fmod\inc;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\BCA-PC1\Desktop\WestEngine\Project\WestEngine\Dependencies\fmod\lib\x64;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Private</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Private;$(ProjectDir)Dependencies\fmod\inc</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -136,7 +147,8 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Private</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Private;$(ProjectDir)Dependencies\fmod\inc</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -151,13 +163,16 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Private</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Private;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Dependencies\fmod\inc</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <Lib>
+      <AdditionalDependencies>fmod_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Lib>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -167,7 +182,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Private</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(ProjectDir)Private;$(ProjectDir)Dependencies;$(ProjectDir)Dependencies\GLFW\include;$(ProjectDir)Dependencies\fmod\inc</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -176,6 +191,9 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <Lib>
+      <AdditionalDependencies>fmod_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Lib>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
