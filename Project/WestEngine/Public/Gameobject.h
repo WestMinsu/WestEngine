@@ -13,11 +13,11 @@ public:
 	void Update(float dt);
 	void Draw();
 
-	template<typename T>
-	T* AddComponent()
+	template<typename T, typename... Args>
+	T* AddComponent(Args&&... args)
 	{
 		auto newComponent = std::make_unique<T>(this);
-		newComponent->Init();
+		newComponent->Init(std::forward<Args>(args)...);
 		T* componentPtr = newComponent.get();
 		m_components.push_back(std::move(newComponent));
 		return componentPtr;

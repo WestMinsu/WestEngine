@@ -24,6 +24,7 @@ WestEngine::WestEngine()
 	m_spriteRenderer = std::make_unique<SpriteRenderer>();
 	m_stateManager = std::make_unique<StateManager>();
 	m_soundManager = std::make_unique<SoundManager>();
+	m_physicsManager = std::make_unique<PhysicsManager>();
 }
 
 WestEngine::~WestEngine() {}
@@ -51,7 +52,7 @@ void WestEngine::Run()
 		m_inputManager->Update();
 
 		m_stateManager->Update(deltaTime);
-
+		m_physicsManager->CheckCollisions();
 		m_stateManager->Draw();
 	
 		m_windowManager->SwapBuffers();

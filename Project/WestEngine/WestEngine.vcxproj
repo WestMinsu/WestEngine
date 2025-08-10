@@ -22,7 +22,9 @@
     <ClInclude Include="Public\Animation.h" />
     <ClInclude Include="Public\AnimationTypes.h" />
     <ClInclude Include="Public\AudioSourceComponent.h" />
+    <ClInclude Include="Public\BoxColliderComponent.h" />
     <ClInclude Include="Public\Camera2D.h" />
+    <ClInclude Include="Public\EngineTypes.h" />
     <ClInclude Include="Public\IComponent.h" />
     <ClInclude Include="Public\Debug.h" />
     <ClInclude Include="Public\Engine.h" />
@@ -30,6 +32,7 @@
     <ClInclude Include="Public\IGameState.h" />
     <ClInclude Include="Public\IndexBuffer.h" />
     <ClInclude Include="Public\InputManager.h" />
+    <ClInclude Include="Public\PhysicsManager.h" />
     <ClInclude Include="Public\RenderManager.h" />
     <ClInclude Include="Public\RigidbodyComponent.h" />
     <ClInclude Include="Public\Shader.h" />
@@ -40,6 +43,7 @@
     <ClInclude Include="Public\StateManager.h" />
     <ClInclude Include="Public\Texture.h" />
     <ClInclude Include="Public\Transform.h" />
+    <ClInclude Include="Public\Utility.h" />
     <ClInclude Include="Public\VertexArray.h" />
     <ClInclude Include="Public\VertexBuffer.h" />
     <ClInclude Include="Public\WestEngine.h" />
@@ -48,10 +52,12 @@
   <ItemGroup>
     <ClCompile Include="Private\Animation.cpp" />
     <ClCompile Include="Private\AudioSourceComponent.cpp" />
+    <ClCompile Include="Private\BoxColliderComponent.cpp" />
     <ClCompile Include="Private\Camera2D.cpp" />
     <ClCompile Include="Private\GameObject.cpp" />
     <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
+    <ClCompile Include="Private\PhysicsManager.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />
     <ClCompile Include="Private\RigidBodyComponent.cpp" />
     <ClCompile Include="Private\Shader.cpp" />
@@ -62,6 +68,7 @@
     <ClCompile Include="Private\StateManager.cpp" />
     <ClCompile Include="Private\Texture.cpp" />
     <ClCompile Include="Private\Transform.cpp" />
+    <ClCompile Include="Private\Utility.cpp" />
     <ClCompile Include="Private\VertexArray.cpp" />
     <ClCompile Include="Private\VertexBuffer.cpp" />
     <ClCompile Include="Private\WestEngine.cpp" />

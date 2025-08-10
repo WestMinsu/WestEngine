@@ -21,6 +21,6 @@ private:
 	std::unique_ptr<Texture> m_playerIdleTexture;
 	std::unique_ptr<Camera2D> m_camera;
 
-	std::unique_ptr<GameObject> m_staticTestObject;
+	std::unique_ptr<GameObject> m_stoneObject;
 	std::unique_ptr<Texture> m_testObjectTexture;
 };

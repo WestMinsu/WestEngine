@@ -7,6 +7,7 @@ class RenderManager;
 class SpriteRenderer;
 class StateManager;
 class SoundManager;
+class PhysicsManager;
 
 class WestEngine
 {
@@ -27,6 +28,7 @@ public:
 	SpriteRenderer& GetSpriteRenderer() { return *m_spriteRenderer; }
 	StateManager& GetStateManager() { return *m_stateManager; }
 	SoundManager& GetSoundManager() { return *m_soundManager; }
+	PhysicsManager& GetPhysicsManager() { return *m_physicsManager; }
 
 private:
 	WestEngine();
@@ -39,4 +41,5 @@ private:
 	std::unique_ptr<SpriteRenderer>  m_spriteRenderer;
 	std::unique_ptr<StateManager>    m_stateManager;
 	std::unique_ptr<SoundManager>	 m_soundManager;
+	std::unique_ptr<PhysicsManager>  m_physicsManager;
 };

@@ -71,8 +71,3 @@ struct AnimData
 //	AnimData animData;
 //};
 //
-//struct AttackHitbox
-//{
-//	AEVec2 offset;
-//	AEVec2 size;
-//};
