@@ -39,6 +39,8 @@ void MainGameState::Init()
 	auto* audioSource = m_playerObject->AddComponent<AudioSourceComponent>();
 	audioSource->AddSound("footstep", "Assets/die_boss.wav");
 
+
+	m_playerObject->AddComponent<RigidbodyComponent>();
 	m_playerObject->AddComponent<PlayerControllerComponent>();
 }
 

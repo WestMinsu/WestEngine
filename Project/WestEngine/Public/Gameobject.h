@@ -17,6 +17,7 @@ public:
 	T* AddComponent()
 	{
 		auto newComponent = std::make_unique<T>(this);
+		newComponent->Init();
 		T* componentPtr = newComponent.get();
 		m_components.push_back(std::move(newComponent));
 		return componentPtr;

@@ -12,3 +12,4 @@
 #include "Camera2D.h"
 #include "SoundManager.h"
 #include "AudioSourceComponent.h"
+#include "RigidbodyComponent.h"

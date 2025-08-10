@@ -31,6 +31,7 @@
     <ClInclude Include="Public\IndexBuffer.h" />
     <ClInclude Include="Public\InputManager.h" />
     <ClInclude Include="Public\RenderManager.h" />
+    <ClInclude Include="Public\RigidbodyComponent.h" />
     <ClInclude Include="Public\Shader.h" />
     <ClInclude Include="Public\SoundManager.h" />
     <ClInclude Include="Public\SpriteAnimatorComponent.h" />
@@ -52,6 +53,7 @@
     <ClCompile Include="Private\IndexBuffer.cpp" />
     <ClCompile Include="Private\InputManager.cpp" />
     <ClCompile Include="Private\RenderManager.cpp" />
+    <ClCompile Include="Private\RigidBodyComponent.cpp" />
     <ClCompile Include="Private\Shader.cpp" />
     <ClCompile Include="Private\SoundManager.cpp" />
     <ClCompile Include="Private\SpriteAnimatorComponent.cpp" />
@@ -172,6 +174,7 @@
     </Link>
     <Lib>
       <AdditionalDependencies>fmod_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)Dependencies\fmod\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Lib>
     <PostBuildEvent>
       <Command>xcopy /Y /D "$(ProjectDir)\Dependencies\fmod\lib\x64\fmod.dll" "$(OutDir)"</Command>
@@ -196,9 +199,10 @@
     </Link>
     <Lib>
       <AdditionalDependencies>fmod_vc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)Dependencies\fmod\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Lib>
     <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)\Dependencies\fmod\lib\x64\fmod.dll" "$(OutDir)"</Command>
+      <Command>xcopy /Y /D "$(ProjectDir)Dependencies\fmod\lib\x64\fmod.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

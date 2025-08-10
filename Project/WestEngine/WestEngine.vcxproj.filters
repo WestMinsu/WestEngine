@@ -83,6 +83,9 @@
     <ClInclude Include="Public\AudioSourceComponent.h">
       <Filter>Public</Filter>
     </ClInclude>
+    <ClInclude Include="Public\RigidbodyComponent.h">
+      <Filter>Public</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\InputManager.cpp">
@@ -140,6 +143,9 @@
       <Filter>Private</Filter>
     </ClCompile>
     <ClCompile Include="Private\AudioSourceComponent.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Private\RigidBodyComponent.cpp">
       <Filter>Private</Filter>
     </ClCompile>
   </ItemGroup>
