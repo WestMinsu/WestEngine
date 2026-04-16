@@ -1,0 +1,12 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+    "name": "westengine",
+    "version-string": "0.1.0",
+    "description": "WestEngine — DX12/Vulkan dual-backend 3D game engine",
+    "dependencies": [
+        {
+            "name": "tracy",
+            "features": ["on-demand"]
+        }
+    ]
+}

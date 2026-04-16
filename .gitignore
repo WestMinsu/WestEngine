@@ -1,0 +1,70 @@
+# =====================
+# WestEngine .gitignore 
+# =====================
+
+# 1. CMake & Build Directories
+/build/
+/out/
+/bin/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+compile_commands.json
+Makefile
+*.vcxproj*
+*.sln
+
+# 2. vcpkg
+vcpkg_installed/
+.vcpkg-root
+
+# 3. Visual Studio & VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.db
+*.opendb
+*.VC.db
+
+# 4. Compiled C++ Binaries & Debug Symbols
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.map
+*.idb
+
+# 5. Shader Build Output & Cache
+*.spv
+*.dxil
+*.d
+/shader_cache/
+*.slang-module
+
+# 5-1. Build-Time Generated Code (Phase 4 — Slang Reflection → C++ binding headers)
+/generated/
+
+# 6. Graphics Profiling & Dumps
+*.rdc
+*.wpix
+*.cap
+
+# 7. Engine Logs & Crashes
+*.log
+/Saved/
+/CrashDumps/
+
+# 8. PSO Cache & Asset Build Output
+/pso_cache/
+*.pso
+
+# 9. OS & Editor
+Thumbs.db
+.DS_Store
+*.swp
+*~
