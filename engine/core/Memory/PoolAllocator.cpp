@@ -14,9 +14,9 @@ namespace west
 {
 
 PoolAllocator::PoolAllocator(usize blockSize, usize blockCount)
-    : m_blockSize(std::max(blockSize, sizeof(FreeNode)))  // Minimum size for free-list node
-    , m_blockCount(blockCount)
-    , m_freeCount(blockCount)
+    : m_blockSize(std::max(blockSize, sizeof(FreeNode))) // Minimum size for free-list node
+      ,
+      m_blockCount(blockCount), m_freeCount(blockCount)
 {
     WEST_ASSERT(blockSize > 0);
     WEST_ASSERT(blockCount > 0);
@@ -25,8 +25,7 @@ PoolAllocator::PoolAllocator(usize blockSize, usize blockCount)
     m_blockSize = AlignUp(m_blockSize, alignof(FreeNode));
 
     m_memory = static_cast<uint8*>(std::malloc(m_blockSize * m_blockCount));
-    WEST_CHECK(m_memory != nullptr, "PoolAllocator: failed to allocate {} bytes",
-        m_blockSize * m_blockCount);
+    WEST_CHECK(m_memory != nullptr, "PoolAllocator: failed to allocate {} bytes", m_blockSize * m_blockCount);
 
     BuildFreeList();
 }
@@ -38,13 +37,10 @@ PoolAllocator::~PoolAllocator()
 }
 
 PoolAllocator::PoolAllocator(PoolAllocator&& other) noexcept
-    : m_memory(other.m_memory)
-    , m_blockSize(other.m_blockSize)
-    , m_blockCount(other.m_blockCount)
-    , m_freeCount(other.m_freeCount)
-    , m_freeList(other.m_freeList)
+    : m_memory(other.m_memory), m_blockSize(other.m_blockSize), m_blockCount(other.m_blockCount),
+      m_freeCount(other.m_freeCount), m_freeList(other.m_freeList)
 {
-    other.m_memory   = nullptr;
+    other.m_memory = nullptr;
     other.m_freeList = nullptr;
     other.m_freeCount = 0;
 }
@@ -55,13 +51,13 @@ PoolAllocator& PoolAllocator::operator=(PoolAllocator&& other) noexcept
     {
         std::free(m_memory);
 
-        m_memory     = other.m_memory;
-        m_blockSize  = other.m_blockSize;
+        m_memory = other.m_memory;
+        m_blockSize = other.m_blockSize;
         m_blockCount = other.m_blockCount;
-        m_freeCount  = other.m_freeCount;
-        m_freeList   = other.m_freeList;
+        m_freeCount = other.m_freeCount;
+        m_freeList = other.m_freeList;
 
-        other.m_memory   = nullptr;
+        other.m_memory = nullptr;
         other.m_freeList = nullptr;
         other.m_freeCount = 0;
     }
@@ -72,7 +68,7 @@ void* PoolAllocator::Allocate()
 {
     if (m_freeList == nullptr)
     {
-        return nullptr;  // Pool exhausted
+        return nullptr; // Pool exhausted
     }
 
     FreeNode* node = m_freeList;

@@ -27,8 +27,8 @@ int main()
     // Test 2: Alignment
     {
         LinearAllocator alloc(1024);
-        (void)alloc.Allocate(1, 1);        // 1 byte, 1 alignment (discard)
-        void* p2 = alloc.Allocate(1, 64);  // 1 byte, 64 alignment
+        (void)alloc.Allocate(1, 1);       // 1 byte, 1 alignment (discard)
+        void* p2 = alloc.Allocate(1, 64); // 1 byte, 64 alignment
         assert(p2 != nullptr);
         assert(IsAligned(reinterpret_cast<usize>(p2), 64));
         std::printf("[PASS] Alignment enforcement\n");
@@ -39,7 +39,7 @@ int main()
         LinearAllocator alloc(64);
         void* p = alloc.Allocate(32);
         assert(p != nullptr);
-        void* p2 = alloc.Allocate(64);  // Should fail — not enough space
+        void* p2 = alloc.Allocate(64); // Should fail — not enough space
         assert(p2 == nullptr);
         std::printf("[PASS] Exhaustion returns nullptr\n");
     }
@@ -64,7 +64,7 @@ int main()
         {
             ++count;
         }
-        assert(count == 8);  // 256 / 32 = 8
+        assert(count == 8); // 256 / 32 = 8
         std::printf("[PASS] Sequential fill to capacity (%d allocations)\n", count);
     }
 

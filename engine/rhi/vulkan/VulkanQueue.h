@@ -1,0 +1,44 @@
+// =============================================================================
+// WestEngine - RHI Vulkan
+// Vulkan queue — vkQueueSubmit2 (Synchronization2)
+// =============================================================================
+#pragma once
+
+#include "rhi/interface/IRHIQueue.h"
+#include "rhi/vulkan/VulkanHelpers.h"
+
+namespace west::rhi
+{
+
+class VulkanQueue final : public IRHIQueue
+{
+public:
+    VulkanQueue() = default;
+    ~VulkanQueue() override = default;
+
+    void Initialize(VkQueue queue, uint32_t familyIndex, RHIQueueType type);
+
+    // ── IRHIQueue interface ───────────────────────────────────────────
+    void Submit(const RHISubmitInfo& info) override;
+    RHIQueueType GetType() const override
+    {
+        return m_type;
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────
+    VkQueue GetVkQueue() const
+    {
+        return m_queue;
+    }
+    uint32_t GetFamilyIndex() const
+    {
+        return m_familyIndex;
+    }
+
+private:
+    VkQueue m_queue = VK_NULL_HANDLE;
+    uint32_t m_familyIndex = 0;
+    RHIQueueType m_type = RHIQueueType::Graphics;
+};
+
+} // namespace west::rhi

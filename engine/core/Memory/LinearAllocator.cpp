@@ -13,9 +13,7 @@
 namespace west
 {
 
-LinearAllocator::LinearAllocator(usize totalSize)
-    : m_totalSize(totalSize)
-    , m_offset(0)
+LinearAllocator::LinearAllocator(usize totalSize) : m_totalSize(totalSize), m_offset(0)
 {
     WEST_ASSERT(totalSize > 0);
     m_memory = static_cast<uint8*>(std::malloc(totalSize));
@@ -29,13 +27,11 @@ LinearAllocator::~LinearAllocator()
 }
 
 LinearAllocator::LinearAllocator(LinearAllocator&& other) noexcept
-    : m_memory(other.m_memory)
-    , m_totalSize(other.m_totalSize)
-    , m_offset(other.m_offset)
+    : m_memory(other.m_memory), m_totalSize(other.m_totalSize), m_offset(other.m_offset)
 {
-    other.m_memory    = nullptr;
+    other.m_memory = nullptr;
     other.m_totalSize = 0;
-    other.m_offset    = 0;
+    other.m_offset = 0;
 }
 
 LinearAllocator& LinearAllocator::operator=(LinearAllocator&& other) noexcept
@@ -44,13 +40,13 @@ LinearAllocator& LinearAllocator::operator=(LinearAllocator&& other) noexcept
     {
         std::free(m_memory);
 
-        m_memory    = other.m_memory;
+        m_memory = other.m_memory;
         m_totalSize = other.m_totalSize;
-        m_offset    = other.m_offset;
+        m_offset = other.m_offset;
 
-        other.m_memory    = nullptr;
+        other.m_memory = nullptr;
         other.m_totalSize = 0;
-        other.m_offset    = 0;
+        other.m_offset = 0;
     }
     return *this;
 }

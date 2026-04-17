@@ -35,9 +35,18 @@ public:
     /// Reset the pool — all blocks become available again.
     void Reset();
 
-    [[nodiscard]] usize GetBlockSize() const { return m_blockSize; }
-    [[nodiscard]] usize GetBlockCount() const { return m_blockCount; }
-    [[nodiscard]] usize GetFreeCount() const { return m_freeCount; }
+    [[nodiscard]] usize GetBlockSize() const
+    {
+        return m_blockSize;
+    }
+    [[nodiscard]] usize GetBlockCount() const
+    {
+        return m_blockCount;
+    }
+    [[nodiscard]] usize GetFreeCount() const
+    {
+        return m_freeCount;
+    }
 
 private:
     struct FreeNode
@@ -47,11 +56,11 @@ private:
 
     void BuildFreeList();
 
-    uint8*    m_memory     = nullptr;
-    usize     m_blockSize  = 0;
-    usize     m_blockCount = 0;
-    usize     m_freeCount  = 0;
-    FreeNode* m_freeList   = nullptr;
+    uint8* m_memory = nullptr;
+    usize m_blockSize = 0;
+    usize m_blockCount = 0;
+    usize m_freeCount = 0;
+    FreeNode* m_freeList = nullptr;
 };
 
 } // namespace west

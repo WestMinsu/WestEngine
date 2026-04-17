@@ -109,7 +109,7 @@ int main()
         assert(pool.GetFreeCount() == 1);
 
         void* p3 = pool.Allocate();
-        assert(p3 == p1);  // Should reuse the freed block (LIFO free-list)
+        assert(p3 == p1); // Should reuse the freed block (LIFO free-list)
         std::printf("[PASS] Reuse freed block\n");
 
         pool.Free(p2);

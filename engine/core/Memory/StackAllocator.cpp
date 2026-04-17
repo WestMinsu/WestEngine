@@ -12,9 +12,7 @@
 namespace west
 {
 
-StackAllocator::StackAllocator(usize totalSize)
-    : m_totalSize(totalSize)
-    , m_offset(0)
+StackAllocator::StackAllocator(usize totalSize) : m_totalSize(totalSize), m_offset(0)
 {
     WEST_ASSERT(totalSize > 0);
     m_memory = static_cast<uint8*>(std::malloc(totalSize));
@@ -28,13 +26,11 @@ StackAllocator::~StackAllocator()
 }
 
 StackAllocator::StackAllocator(StackAllocator&& other) noexcept
-    : m_memory(other.m_memory)
-    , m_totalSize(other.m_totalSize)
-    , m_offset(other.m_offset)
+    : m_memory(other.m_memory), m_totalSize(other.m_totalSize), m_offset(other.m_offset)
 {
-    other.m_memory    = nullptr;
+    other.m_memory = nullptr;
     other.m_totalSize = 0;
-    other.m_offset    = 0;
+    other.m_offset = 0;
 }
 
 StackAllocator& StackAllocator::operator=(StackAllocator&& other) noexcept
@@ -43,13 +39,13 @@ StackAllocator& StackAllocator::operator=(StackAllocator&& other) noexcept
     {
         std::free(m_memory);
 
-        m_memory    = other.m_memory;
+        m_memory = other.m_memory;
         m_totalSize = other.m_totalSize;
-        m_offset    = other.m_offset;
+        m_offset = other.m_offset;
 
-        other.m_memory    = nullptr;
+        other.m_memory = nullptr;
         other.m_totalSize = 0;
-        other.m_offset    = 0;
+        other.m_offset = 0;
     }
     return *this;
 }

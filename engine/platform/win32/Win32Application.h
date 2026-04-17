@@ -1,14 +1,25 @@
 // =============================================================================
 // WestEngine - Platform (Win32)
-// Win32 application lifecycle
+// Win32 application lifecycle with RHI rendering integration
 // =============================================================================
 #pragma once
 
+#include "core/Timer.h"
 #include "platform/IApplication.h"
 #include "platform/win32/Win32Window.h"
-#include "core/Timer.h"
+#include "rhi/interface/RHIEnums.h"
 
 #include <memory>
+#include <vector>
+
+namespace west::rhi
+{
+class IRHIDevice;
+class IRHISwapChain;
+class IRHIFence;
+class IRHISemaphore;
+class IRHICommandList;
+} // namespace west::rhi
 
 namespace west
 {
@@ -25,12 +36,38 @@ public:
     void Shutdown() override;
 
     /// Access the main window.
-    [[nodiscard]] IWindow* GetWindow() const { return m_window.get(); }
+    [[nodiscard]] IWindow* GetWindow() const
+    {
+        return m_window.get();
+    }
 
 private:
+    void InitializeRHI();
+    void ShutdownRHI();
+    void RenderFrame();
+
+    // ── Platform ──────────────────────────────────────────────────────
     std::unique_ptr<Win32Window> m_window;
     Timer m_timer;
-    bool  m_isRunning = false;
+    bool m_isRunning = false;
+
+    // ── RHI ───────────────────────────────────────────────────────────
+    rhi::RHIBackend m_backend = rhi::RHIBackend::DX12;
+
+    std::unique_ptr<rhi::IRHIDevice> m_rhiDevice;
+    std::unique_ptr<rhi::IRHISwapChain> m_swapChain;
+    std::unique_ptr<rhi::IRHIFence> m_frameFence;
+
+    // Per-frame resources (Frame-in-Flight)
+    static constexpr uint32 kMaxFramesInFlight = 2;
+
+    std::vector<std::unique_ptr<rhi::IRHICommandList>> m_commandLists;
+    std::vector<std::unique_ptr<rhi::IRHISemaphore>> m_acquireSemaphores; // Vulkan only (sized by flight frames)
+    std::vector<std::unique_ptr<rhi::IRHISemaphore>> m_presentSemaphores; // Vulkan only (sized by swapchain buffers)
+    std::vector<uint64> m_fenceValues;
+    std::vector<bool> m_isFirstFrame; // Tracks if a swapchain image is being used for the very first time
+
+    uint64 m_frameCount = 0;
 };
 
 } // namespace west

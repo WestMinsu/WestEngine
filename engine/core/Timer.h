@@ -24,10 +24,16 @@ public:
     void Tick();
 
     /// Time elapsed since last Tick() call, in seconds.
-    [[nodiscard]] float64 GetDeltaTime() const { return m_deltaTime; }
+    [[nodiscard]] float64 GetDeltaTime() const
+    {
+        return m_deltaTime;
+    }
 
     /// Total time since last Reset(), in seconds.
-    [[nodiscard]] float64 GetTotalTime() const { return m_totalTime; }
+    [[nodiscard]] float64 GetTotalTime() const
+    {
+        return m_totalTime;
+    }
 
     /// Frames per second based on current delta time.
     [[nodiscard]] float64 GetFPS() const;
@@ -38,8 +44,8 @@ private:
 
     TimePoint m_startTime;
     TimePoint m_lastTickTime;
-    float64   m_deltaTime = 0.0;
-    float64   m_totalTime = 0.0;
+    float64 m_deltaTime = 0.0;
+    float64 m_totalTime = 0.0;
 };
 
 } // namespace west

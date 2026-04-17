@@ -1,12 +1,19 @@
 {
-    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-    "name": "westengine",
-    "version-string": "0.1.0",
-    "description": "WestEngine — DX12/Vulkan dual-backend 3D game engine",
-    "dependencies": [
-        {
-            "name": "tracy",
-            "features": ["on-demand"]
-        }
-    ]
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "westengine",
+  "version-string": "0.1.0",
+  "description": "WestEngine — DX12/Vulkan dual-backend 3D game engine",
+  "dependencies": [
+    {
+      "name": "tracy",
+      "features": [
+        "on-demand"
+      ]
+    },
+    "directx-headers",
+    "vulkan",
+    "vulkan-memory-allocator",
+    "d3d12-memory-allocator"
+  ],
+  "builtin-baseline": "37dd44f23f51041f480440e99b45e5706f47765d"
 }

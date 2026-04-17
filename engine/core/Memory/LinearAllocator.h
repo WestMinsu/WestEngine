@@ -33,15 +33,21 @@ public:
     void Reset();
 
     /// Current used bytes.
-    [[nodiscard]] usize GetUsedSize() const { return m_offset; }
+    [[nodiscard]] usize GetUsedSize() const
+    {
+        return m_offset;
+    }
 
     /// Total capacity in bytes.
-    [[nodiscard]] usize GetTotalSize() const { return m_totalSize; }
+    [[nodiscard]] usize GetTotalSize() const
+    {
+        return m_totalSize;
+    }
 
 private:
-    uint8* m_memory    = nullptr;
-    usize  m_totalSize = 0;
-    usize  m_offset    = 0;
+    uint8* m_memory = nullptr;
+    usize m_totalSize = 0;
+    usize m_offset = 0;
 };
 
 } // namespace west

@@ -19,6 +19,16 @@ project(WestEngine
     LANGUAGES CXX
 )
 
+# ── Feature Options ─────────────────────────────────────────────────────────
+# WEST_ENABLE_* is user-facing. WEST_HAS_* is internal target gating.
+option(WEST_ENABLE_DX12 "Enable DX12 backend" ON)
+option(WEST_ENABLE_VULKAN "Enable Vulkan backend" ON)
+option(WEST_ENABLE_TRACY "Enable Tracy profiler" ON)
+
+set(WEST_HAS_DX12 ${WEST_ENABLE_DX12})
+set(WEST_HAS_VULKAN ${WEST_ENABLE_VULKAN})
+set(WEST_HAS_TRACY ${WEST_ENABLE_TRACY})
+
 # ── C++20 Standard ──────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,4 +62,17 @@ target_link_libraries(west_engine
         west_platform_win32
 )
 
+if(TARGET west_rhi_dx12)
+    target_link_libraries(west_engine PRIVATE west_rhi_dx12)
+endif()
+
+if(TARGET west_rhi_vulkan)
+    target_link_libraries(west_engine PRIVATE west_rhi_vulkan)
+endif()
+
 west_set_compiler_options(west_engine)
+
+# Set working directory for Visual Studio debugger
+set_target_properties(west_engine PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)

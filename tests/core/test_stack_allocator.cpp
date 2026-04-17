@@ -2,8 +2,8 @@
 // WestEngine - Tests
 // StackAllocator unit test
 // =============================================================================
-#include "core/Memory/StackAllocator.h"
 #include "core/Memory/MemoryUtils.h"
+#include "core/Memory/StackAllocator.h"
 
 #include <cassert>
 #include <cstdio>
@@ -41,7 +41,7 @@ int main()
         StackAllocator alloc(64);
         void* p1 = alloc.Allocate(32);
         assert(p1 != nullptr);
-        void* p2 = alloc.Allocate(64);  // Should fail
+        void* p2 = alloc.Allocate(64); // Should fail
         assert(p2 == nullptr);
         std::printf("[PASS] Exhaustion returns nullptr\n");
     }
@@ -60,7 +60,7 @@ int main()
     // Test 5: Alignment
     {
         StackAllocator alloc(1024);
-        (void)alloc.Allocate(3, 1);  // Misalign intentionally
+        (void)alloc.Allocate(3, 1); // Misalign intentionally
         void* p = alloc.Allocate(16, 128);
         assert(p != nullptr);
         assert(IsAligned(reinterpret_cast<usize>(p), 128));

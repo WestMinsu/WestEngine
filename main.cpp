@@ -1,6 +1,3 @@
-// =============================================================================
-// WestEngine - Application Entry Point
-// =============================================================================
 #include "platform/IApplication.h"
 
 int main()
@@ -15,6 +12,5 @@ int main()
 
     app->Run();
     app->Shutdown();
-
     return 0;
 }

@@ -4,6 +4,6 @@
 // =============================================================================
 #pragma once
 
-#include "core/Types.h"
 #include "core/Profiler.h"
+#include "core/Types.h"
 #include "platform/PlatformDetect.h"

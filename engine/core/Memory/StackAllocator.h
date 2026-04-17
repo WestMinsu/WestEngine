@@ -30,7 +30,10 @@ public:
     [[nodiscard]] void* Allocate(usize size, usize alignment = 16);
 
     /// Get a marker representing the current stack top.
-    [[nodiscard]] Marker GetMarker() const { return m_offset; }
+    [[nodiscard]] Marker GetMarker() const
+    {
+        return m_offset;
+    }
 
     /// Roll back all allocations made since the given marker.
     void FreeToMarker(Marker marker);
@@ -38,13 +41,19 @@ public:
     /// Reset the entire stack.
     void Reset();
 
-    [[nodiscard]] usize GetUsedSize() const { return m_offset; }
-    [[nodiscard]] usize GetTotalSize() const { return m_totalSize; }
+    [[nodiscard]] usize GetUsedSize() const
+    {
+        return m_offset;
+    }
+    [[nodiscard]] usize GetTotalSize() const
+    {
+        return m_totalSize;
+    }
 
 private:
-    uint8* m_memory    = nullptr;
-    usize  m_totalSize = 0;
-    usize  m_offset    = 0;
+    uint8* m_memory = nullptr;
+    usize m_totalSize = 0;
+    usize m_offset = 0;
 };
 
 } // namespace west

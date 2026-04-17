@@ -14,10 +14,10 @@ Timer::Timer()
 
 void Timer::Reset()
 {
-    m_startTime    = Clock::now();
+    m_startTime = Clock::now();
     m_lastTickTime = m_startTime;
-    m_deltaTime    = 0.0;
-    m_totalTime    = 0.0;
+    m_deltaTime = 0.0;
+    m_totalTime = 0.0;
 }
 
 void Timer::Tick()
@@ -27,8 +27,8 @@ void Timer::Tick()
     std::chrono::duration<float64> delta = now - m_lastTickTime;
     std::chrono::duration<float64> total = now - m_startTime;
 
-    m_deltaTime    = delta.count();
-    m_totalTime    = total.count();
+    m_deltaTime = delta.count();
+    m_totalTime = total.count();
     m_lastTickTime = now;
 }
 

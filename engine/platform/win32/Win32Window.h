@@ -23,23 +23,30 @@ public:
 
     // ── IWindow interface ──────────────────────────────────────────────
     void PollEvents() override;
-    [[nodiscard]] bool ShouldClose() const override { return m_shouldClose; }
+    [[nodiscard]] bool ShouldClose() const override
+    {
+        return m_shouldClose;
+    }
     [[nodiscard]] void* GetNativeHandle() const override;
-    [[nodiscard]] uint32 GetWidth() const override { return m_width; }
-    [[nodiscard]] uint32 GetHeight() const override { return m_height; }
+    [[nodiscard]] uint32 GetWidth() const override
+    {
+        return m_width;
+    }
+    [[nodiscard]] uint32 GetHeight() const override
+    {
+        return m_height;
+    }
 
 private:
-    void* m_hwnd        = nullptr;  // HWND stored as void* to avoid header leak
-    uint32 m_width      = 0;
-    uint32 m_height     = 0;
-    bool   m_shouldClose = false;
+    void* m_hwnd = nullptr; // HWND stored as void* to avoid header leak
+    uint32 m_width = 0;
+    uint32 m_height = 0;
+    bool m_shouldClose = false;
 
     std::wstring m_className;
 
     // Static window procedure — routes to instance
-    static long long __stdcall WindowProc(void* hwnd, unsigned int msg,
-                                          unsigned long long wParam,
-                                          long long lParam);
+    static long long __stdcall WindowProc(void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam);
 };
 
 } // namespace west

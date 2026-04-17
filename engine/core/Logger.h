@@ -16,11 +16,11 @@ namespace west
 
 enum class LogLevel : uint8
 {
-    Verbose,    // Detailed diagnostic info (Debug only)
-    Info,       // General information
-    Warning,    // Recoverable issues
-    Error,      // Serious errors
-    Fatal,      // Unrecoverable — triggers crash handler
+    Verbose, // Detailed diagnostic info (Debug only)
+    Info,    // General information
+    Warning, // Recoverable issues
+    Error,   // Serious errors
+    Fatal,   // Unrecoverable — triggers crash handler
 };
 
 // ── Log Category ───────────────────────────────────────────────────────────
@@ -49,15 +49,13 @@ public:
     static void Shutdown();
 
     /// Core log function — prefer the WEST_LOG_* macros below
-    static void Log(LogLevel level, LogCategory category,
-                    std::string_view message);
+    static void Log(LogLevel level, LogCategory category, std::string_view message);
 
     /// Convenience: Fatal log (always active, used by WEST_ASSERT/WEST_CHECK)
-    template<typename... Args>
+    template <typename... Args>
     static void Fatal(std::format_string<Args...> fmt, Args&&... args)
     {
-        Log(LogLevel::Fatal, LogCategory::Core,
-            std::format(fmt, std::forward<Args>(args)...));
+        Log(LogLevel::Fatal, LogCategory::Core, std::format(fmt, std::forward<Args>(args)...));
     }
 
 private:
@@ -71,26 +69,21 @@ private:
 // Verbose and Info are compiled out in Release builds.
 
 #if WEST_DEBUG
-    #define WEST_LOG_VERBOSE(category, fmt, ...)                                \
-        west::Logger::Log(west::LogLevel::Verbose, category,                    \
-            std::format(fmt __VA_OPT__(,) __VA_ARGS__))
+#define WEST_LOG_VERBOSE(category, fmt, ...)                                                                           \
+    west::Logger::Log(west::LogLevel::Verbose, category, std::format(fmt __VA_OPT__(, ) __VA_ARGS__))
 
-    #define WEST_LOG_INFO(category, fmt, ...)                                   \
-        west::Logger::Log(west::LogLevel::Info, category,                       \
-            std::format(fmt __VA_OPT__(,) __VA_ARGS__))
+#define WEST_LOG_INFO(category, fmt, ...)                                                                              \
+    west::Logger::Log(west::LogLevel::Info, category, std::format(fmt __VA_OPT__(, ) __VA_ARGS__))
 #else
-    #define WEST_LOG_VERBOSE(category, fmt, ...) ((void)0)
-    #define WEST_LOG_INFO(category, fmt, ...)    ((void)0)
+#define WEST_LOG_VERBOSE(category, fmt, ...) ((void)0)
+#define WEST_LOG_INFO(category, fmt, ...) ((void)0)
 #endif
 
-#define WEST_LOG_WARNING(category, fmt, ...)                                    \
-    west::Logger::Log(west::LogLevel::Warning, category,                        \
-        std::format(fmt __VA_OPT__(,) __VA_ARGS__))
+#define WEST_LOG_WARNING(category, fmt, ...)                                                                           \
+    west::Logger::Log(west::LogLevel::Warning, category, std::format(fmt __VA_OPT__(, ) __VA_ARGS__))
 
-#define WEST_LOG_ERROR(category, fmt, ...)                                      \
-    west::Logger::Log(west::LogLevel::Error, category,                          \
-        std::format(fmt __VA_OPT__(,) __VA_ARGS__))
+#define WEST_LOG_ERROR(category, fmt, ...)                                                                             \
+    west::Logger::Log(west::LogLevel::Error, category, std::format(fmt __VA_OPT__(, ) __VA_ARGS__))
 
-#define WEST_LOG_FATAL(category, fmt, ...)                                      \
-    west::Logger::Log(west::LogLevel::Fatal, category,                          \
-        std::format(fmt __VA_OPT__(,) __VA_ARGS__))
+#define WEST_LOG_FATAL(category, fmt, ...)                                                                             \
+    west::Logger::Log(west::LogLevel::Fatal, category, std::format(fmt __VA_OPT__(, ) __VA_ARGS__))
