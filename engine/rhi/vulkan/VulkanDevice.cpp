@@ -8,8 +8,11 @@
 #include "rhi/interface/IRHIPipeline.h"
 #include "rhi/interface/IRHISampler.h"
 #include "rhi/interface/IRHITexture.h"
+#include "rhi/vulkan/VulkanBuffer.h"
 #include "rhi/vulkan/VulkanCommandList.h"
 #include "rhi/vulkan/VulkanFence.h"
+#include "rhi/vulkan/VulkanMemoryAllocator.h"
+#include "rhi/vulkan/VulkanPipeline.h"
 #include "rhi/vulkan/VulkanQueue.h"
 #include "rhi/vulkan/VulkanSemaphore.h"
 #include "rhi/vulkan/VulkanSwapChain.h"
@@ -25,6 +28,8 @@
 
 namespace west::rhi
 {
+
+VulkanDevice::VulkanDevice() = default;
 
 // ── Debug Callback ────────────────────────────────────────────────────────
 
@@ -58,6 +63,8 @@ VulkanDevice::~VulkanDevice()
         WaitIdle();
     }
 
+    m_deletionQueue.FlushAll();
+    m_memoryAllocator.reset();
     m_graphicsQueue.reset();
 
     if (m_device)
@@ -94,13 +101,13 @@ bool VulkanDevice::Initialize(const RHIDeviceConfig& config)
 
     CreateInstance(config.enableValidation);
 
-    if (config.enableValidation)
+    if (m_validationEnabled)
     {
         SetupDebugMessenger();
     }
 
     SelectPhysicalDevice(config.preferredGPUIndex);
-    CreateLogicalDevice(config.enableValidation);
+    CreateLogicalDevice(m_validationEnabled);
     QueryDeviceCaps();
 
     // Create graphics queue wrapper
@@ -113,6 +120,15 @@ bool VulkanDevice::Initialize(const RHIDeviceConfig& config)
     WEST_LOG_INFO(LogCategory::RHI, "  VRAM: {} MB", m_caps.dedicatedVideoMemory / (1024 * 1024));
     WEST_LOG_INFO(LogCategory::RHI, "  Ray Tracing: {}", m_caps.supportsRayTracing ? "Yes" : "No");
     WEST_LOG_INFO(LogCategory::RHI, "  Mesh Shaders: {}", m_caps.supportsMeshShaders ? "Yes" : "No");
+
+    // Phase 2: Initialize VMA
+    m_memoryAllocator = std::make_unique<VulkanMemoryAllocator>();
+    if (!m_memoryAllocator->Initialize(m_instance, m_physicalDevice, m_device))
+    {
+        WEST_LOG_FATAL(LogCategory::RHI, "Failed to initialize VMA");
+        return false;
+    }
+    WEST_LOG_INFO(LogCategory::RHI, "  Resizable BAR: {}", m_memoryAllocator->SupportsReBAR() ? "Yes" : "No");
 
     return true;
 }
@@ -139,7 +155,14 @@ void VulkanDevice::CreateInstance(bool enableValidation)
 
     std::vector<const char*> layers;
 
-    if (enableValidation)
+    m_validationEnabled = enableValidation && IsValidationLayerAvailable();
+    if (enableValidation && !m_validationEnabled)
+    {
+        WEST_LOG_WARNING(LogCategory::RHI,
+                         "VK_LAYER_KHRONOS_validation is not available. Vulkan validation disabled.");
+    }
+
+    if (m_validationEnabled)
     {
         layers.push_back("VK_LAYER_KHRONOS_validation");
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -155,7 +178,7 @@ void VulkanDevice::CreateInstance(bool enableValidation)
 
     // Enable debug messenger during instance creation/destruction
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
-    if (enableValidation)
+    if (m_validationEnabled)
     {
         debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
         debugCreateInfo.messageSeverity =
@@ -170,6 +193,25 @@ void VulkanDevice::CreateInstance(bool enableValidation)
 
     WEST_VK_CHECK(vkCreateInstance(&createInfo, nullptr, &m_instance));
     WEST_LOG_INFO(LogCategory::RHI, "Vulkan Instance created (API 1.3).");
+}
+
+bool VulkanDevice::IsValidationLayerAvailable() const
+{
+    uint32_t layerCount = 0;
+    WEST_VK_CHECK(vkEnumerateInstanceLayerProperties(&layerCount, nullptr));
+
+    std::vector<VkLayerProperties> layers(layerCount);
+    WEST_VK_CHECK(vkEnumerateInstanceLayerProperties(&layerCount, layers.data()));
+
+    for (const auto& layer : layers)
+    {
+        if (std::strcmp(layer.layerName, "VK_LAYER_KHRONOS_validation") == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // ── Debug Messenger ───────────────────────────────────────────────────────
@@ -207,8 +249,10 @@ void VulkanDevice::SelectPhysicalDevice(uint32_t preferredIndex)
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
 
-    uint32_t bestIndex = 0;
+    uint32_t bestIndex = UINT32_MAX;
     uint64_t bestVRAM = 0;
+    bool preferredFound = false;
+    bool bestIsDiscrete = false;
 
     for (uint32_t i = 0; i < deviceCount; ++i)
     {
@@ -249,14 +293,26 @@ void VulkanDevice::SelectPhysicalDevice(uint32_t preferredIndex)
         if (!hasGraphics)
             continue;
 
-        if (i == preferredIndex || (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && vram > bestVRAM))
+        if (i == preferredIndex)
+        {
+            bestIndex = i;
+            preferredFound = true;
+            bestVRAM = vram;
+            break;
+        }
+
+        const bool isDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        const bool betterType = isDiscrete && !bestIsDiscrete;
+        const bool betterMemory = isDiscrete == bestIsDiscrete && vram > bestVRAM;
+        if (!preferredFound && (bestIndex == UINT32_MAX || betterType || betterMemory))
         {
             bestIndex = i;
             bestVRAM = vram;
-            if (i == preferredIndex)
-                break;
+            bestIsDiscrete = isDiscrete;
         }
     }
+
+    WEST_CHECK(bestIndex != UINT32_MAX, "No Vulkan-capable GPU with graphics queue found");
 
     m_physicalDevice = devices[bestIndex];
 
@@ -489,9 +545,9 @@ RHIDeviceCaps VulkanDevice::GetCapabilities() const
 
 std::unique_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc)
 {
-    // TODO(minsu): Phase 2 — VMA buffer allocation
-    WEST_LOG_WARNING(LogCategory::RHI, "VulkanDevice::CreateBuffer — stub");
-    return nullptr;
+    auto buffer = std::make_unique<VulkanBuffer>();
+    buffer->Initialize(this, desc);
+    return buffer;
 }
 
 std::unique_ptr<IRHITexture> VulkanDevice::CreateTexture(const RHITextureDesc& desc)
@@ -510,9 +566,12 @@ std::unique_ptr<IRHISampler> VulkanDevice::CreateSampler(const RHISamplerDesc& d
 
 std::unique_ptr<IRHIPipeline> VulkanDevice::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc)
 {
-    // TODO(minsu): Phase 4 — Graphics pipeline
-    WEST_LOG_WARNING(LogCategory::RHI, "VulkanDevice::CreateGraphicsPipeline — stub");
-    return nullptr;
+    // Determine swapchain format for dynamic rendering
+    // Default to B8G8R8A8_UNORM if no color formats specified
+    VkFormat swapChainFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    auto pipeline = std::make_unique<VulkanPipeline>();
+    pipeline->Initialize(m_device, desc, swapChainFormat);
+    return pipeline;
 }
 
 std::unique_ptr<IRHIPipeline> VulkanDevice::CreateComputePipeline(const RHIComputePipelineDesc& desc)

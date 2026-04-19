@@ -7,6 +7,7 @@
 #include "rhi/interface/RHIDescriptors.h"
 #include "rhi/interface/RHIEnums.h"
 
+#include <functional>
 #include <memory>
 
 namespace west::rhi
@@ -61,6 +62,15 @@ public:
     virtual RHIBackend GetBackend() const = 0;
     virtual const char* GetDeviceName() const = 0;
     virtual RHIDeviceCaps GetCapabilities() const = 0;
+
+    // ── Memory Management ─────────────────────────────────────────────
+    virtual void EnqueueDeferredDeletion(std::function<void()> deleter, uint64_t fenceValue) = 0;
+    virtual void FlushDeferredDeletions(uint64_t completedFenceValue) = 0;
+    virtual void FlushAllDeferredDeletions() = 0;
+
+    // Application sets this at the start of the frame so resources know when they are safe to delete.
+    virtual void SetCurrentFrameFenceValue(uint64_t fenceValue) = 0;
+    virtual uint64_t GetCurrentFrameFenceValue() const = 0;
 };
 
 } // namespace west::rhi

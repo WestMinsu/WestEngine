@@ -4,8 +4,11 @@
 // =============================================================================
 #include "rhi/dx12/DX12Device.h"
 
+#include "rhi/dx12/DX12Buffer.h"
 #include "rhi/dx12/DX12CommandList.h"
 #include "rhi/dx12/DX12Fence.h"
+#include "rhi/dx12/DX12MemoryAllocator.h"
+#include "rhi/dx12/DX12Pipeline.h"
 #include "rhi/dx12/DX12Queue.h"
 #include "rhi/dx12/DX12Semaphore.h"
 #include "rhi/dx12/DX12SwapChain.h"
@@ -19,6 +22,8 @@
 namespace west::rhi
 {
 
+DX12Device::DX12Device() = default;
+
 DX12Device::~DX12Device()
 {
     // Ensure GPU is idle before destroying anything
@@ -26,6 +31,9 @@ DX12Device::~DX12Device()
     {
         WaitIdle();
     }
+
+    // Flush all pending deletions before shutting down the allocator
+    m_deletionQueue.FlushAll();
 
     // Destroy queues before device
     m_graphicsQueue.reset();
@@ -65,9 +73,10 @@ bool DX12Device::Initialize(const RHIDeviceConfig& config)
 {
     WEST_LOG_INFO(LogCategory::RHI, "Initializing DX12 Device...");
 
+    bool debugLayerEnabled = false;
     if (config.enableValidation)
     {
-        EnableDebugLayer(false);
+        debugLayerEnabled = EnableDebugLayer(false);
     }
 
     if (config.enableGPUCrashDiag)
@@ -77,7 +86,7 @@ bool DX12Device::Initialize(const RHIDeviceConfig& config)
 
     // Create DXGI Factory
     UINT factoryFlags = 0;
-    if (config.enableValidation)
+    if (debugLayerEnabled)
     {
         factoryFlags = DXGI_CREATE_FACTORY_DEBUG;
     }
@@ -89,17 +98,26 @@ bool DX12Device::Initialize(const RHIDeviceConfig& config)
     QueryDeviceCaps();
     CreateQueues();
 
+    // Phase 2: Initialize D3D12MA memory allocator
+    m_memoryAllocator = std::make_unique<DX12MemoryAllocator>();
+    if (!m_memoryAllocator->Initialize(m_device.Get(), m_adapter.Get()))
+    {
+        WEST_LOG_FATAL(LogCategory::RHI, "Failed to initialize D3D12MA");
+        return false;
+    }
+
     WEST_LOG_INFO(LogCategory::RHI, "DX12 Device initialized: {}", m_deviceName);
     WEST_LOG_INFO(LogCategory::RHI, "  VRAM: {} MB", m_caps.dedicatedVideoMemory / (1024 * 1024));
     WEST_LOG_INFO(LogCategory::RHI, "  Ray Tracing: {}", m_caps.supportsRayTracing ? "Yes" : "No");
     WEST_LOG_INFO(LogCategory::RHI, "  Mesh Shaders: {}", m_caps.supportsMeshShaders ? "Yes" : "No");
+    WEST_LOG_INFO(LogCategory::RHI, "  Resizable BAR: {}", m_memoryAllocator->SupportsReBAR() ? "Yes" : "No");
 
     return true;
 }
 
 // ── Debug Layer ───────────────────────────────────────────────────────────
 
-void DX12Device::EnableDebugLayer(bool enableGBV)
+bool DX12Device::EnableDebugLayer(bool enableGBV)
 {
     ComPtr<ID3D12Debug5> debugController;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
@@ -112,10 +130,12 @@ void DX12Device::EnableDebugLayer(bool enableGBV)
             debugController->SetEnableGPUBasedValidation(TRUE);
             WEST_LOG_INFO(LogCategory::RHI, "DX12 GPU-Based Validation enabled.");
         }
+        return true;
     }
     else
     {
         WEST_LOG_WARNING(LogCategory::RHI, "Failed to enable DX12 Debug Layer. Install Graphics Tools.");
+        return false;
     }
 }
 
@@ -142,7 +162,8 @@ void DX12Device::SelectAdapter(uint32_t preferredIndex)
 {
     ComPtr<IDXGIAdapter4> adapter;
     uint32_t adapterIndex = 0;
-    uint32_t bestIndex = 0;
+    uint32_t bestIndex = UINT32_MAX;
+    bool preferredFound = false;
     uint64_t bestVRAM = 0;
 
     // Enumerate adapters, prefer high-performance GPU
@@ -171,19 +192,26 @@ void DX12Device::SelectAdapter(uint32_t preferredIndex)
             WEST_LOG_INFO(LogCategory::RHI, "  GPU[{}]: {} ({} MB VRAM)", adapterIndex, narrowName,
                           desc.DedicatedVideoMemory / (1024 * 1024));
 
-            if (adapterIndex == preferredIndex || desc.DedicatedVideoMemory > bestVRAM)
+            if (adapterIndex == preferredIndex)
             {
-                if (adapterIndex == preferredIndex || bestVRAM == 0)
-                {
-                    bestIndex = adapterIndex;
-                    bestVRAM = desc.DedicatedVideoMemory;
-                }
+                bestIndex = adapterIndex;
+                preferredFound = true;
+                bestVRAM = desc.DedicatedVideoMemory;
+                break;
+            }
+
+            if (!preferredFound && (bestIndex == UINT32_MAX || desc.DedicatedVideoMemory > bestVRAM))
+            {
+                bestIndex = adapterIndex;
+                bestVRAM = desc.DedicatedVideoMemory;
             }
         }
 
         adapterIndex++;
         adapter.Reset();
     }
+
+    WEST_CHECK(bestIndex != UINT32_MAX, "No DX12-capable GPU found");
 
     // Re-acquire the selected adapter
     WEST_HR_CHECK(m_factory->EnumAdapterByGpuPreference(bestIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
@@ -236,9 +264,9 @@ void DX12Device::QueryDeviceCaps()
     arch.NodeIndex = 0;
     if (SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE1, &arch, sizeof(arch))))
     {
-        // ReBAR is indicated by large BAR allocation being possible
-        // We approximate by checking shared memory size
-        m_caps.supportsResizableBar = (m_adapterDesc.SharedSystemMemory > 256ull * 1024 * 1024);
+        // Conservative Phase 2 signal for a fast CPU-visible GPU heap path.
+        // SharedSystemMemory alone is not a reliable ReBAR indicator on discrete GPUs.
+        m_caps.supportsResizableBar = arch.CacheCoherentUMA || arch.UMA;
     }
 
     // Bindless: DX12 Tier 2+ supports unbounded descriptor arrays
@@ -330,9 +358,9 @@ RHIDeviceCaps DX12Device::GetCapabilities() const
 
 std::unique_ptr<IRHIBuffer> DX12Device::CreateBuffer(const RHIBufferDesc& desc)
 {
-    // TODO(minsu): Phase 2 — D3D12MA buffer allocation
-    WEST_LOG_WARNING(LogCategory::RHI, "DX12Device::CreateBuffer — stub, not yet implemented");
-    return nullptr;
+    auto buffer = std::make_unique<DX12Buffer>();
+    buffer->Initialize(this, desc);
+    return buffer;
 }
 
 std::unique_ptr<IRHITexture> DX12Device::CreateTexture(const RHITextureDesc& desc)
@@ -351,9 +379,9 @@ std::unique_ptr<IRHISampler> DX12Device::CreateSampler(const RHISamplerDesc& des
 
 std::unique_ptr<IRHIPipeline> DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc)
 {
-    // TODO(minsu): Phase 4 — PSO creation with Slang bytecode
-    WEST_LOG_WARNING(LogCategory::RHI, "DX12Device::CreateGraphicsPipeline — stub");
-    return nullptr;
+    auto pipeline = std::make_unique<DX12Pipeline>();
+    pipeline->Initialize(m_device.Get(), desc);
+    return pipeline;
 }
 
 std::unique_ptr<IRHIPipeline> DX12Device::CreateComputePipeline(const RHIComputePipelineDesc& desc)

@@ -47,8 +47,6 @@ west_set_compiler_options(west_core)
 if(WIN32)
     add_library(west_platform_win32 STATIC
         platform/win32/Win32Window.cpp
-        platform/win32/Win32Application.cpp
-        rhi/RHIFactory.cpp
     )
 
     file(GLOB_RECURSE WEST_PLATFORM_HEADERS CONFIGURE_DEPENDS
@@ -67,6 +65,23 @@ if(WIN32)
     west_set_compiler_options(west_platform_win32)
 endif()
 
+# ── west_engine_runtime ───────────────────────────────────────────────────
+# Application lifecycle and demo rendering loop. Depends on platform + RHI.
+if(WIN32)
+    add_library(west_engine_runtime STATIC
+        platform/win32/Win32Application.cpp
+        rhi/RHIFactory.cpp
+    )
+
+    target_link_libraries(west_engine_runtime
+        PUBLIC
+            west_core
+            west_platform_win32
+    )
+
+    west_set_compiler_options(west_engine_runtime)
+endif()
+
 # ── west_rhi_interface ──────────────────────────────────────────────────────
 # Pure header-only INTERFACE library. No .cpp files.
 add_library(west_rhi_interface INTERFACE)
@@ -81,6 +96,26 @@ target_link_libraries(west_rhi_interface
         west_core
 )
 
+# ── west_rhi_common ─────────────────────────────────────────────────────────
+# Shared utilities across backends (format conversion, etc.)
+add_library(west_rhi_common STATIC
+    rhi/common/FormatConversion.cpp
+    rhi/common/DeferredDeletionQueue.cpp
+)
+
+file(GLOB_RECURSE WEST_RHI_COMMON_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/rhi/common/*.h"
+)
+
+target_sources(west_rhi_common PRIVATE ${WEST_RHI_COMMON_HEADERS})
+
+target_link_libraries(west_rhi_common
+    PUBLIC
+        west_rhi_interface
+)
+
+west_set_compiler_options(west_rhi_common)
+
 # ── west_rhi_dx12 ──────────────────────────────────────────────────────────
 # DX12 backend implementation. Depends on west_rhi_interface + DirectX 12.
 if(WIN32 AND WEST_HAS_DX12)
@@ -90,6 +125,9 @@ if(WIN32 AND WEST_HAS_DX12)
         rhi/dx12/DX12Fence.cpp
         rhi/dx12/DX12SwapChain.cpp
         rhi/dx12/DX12CommandList.cpp
+        rhi/dx12/DX12MemoryAllocator.cpp
+        rhi/dx12/DX12Buffer.cpp
+        rhi/dx12/DX12Pipeline.cpp
     )
 
     file(GLOB_RECURSE WEST_RHI_DX12_HEADERS CONFIGURE_DEPENDS
@@ -107,19 +145,20 @@ if(WIN32 AND WEST_HAS_DX12)
         PUBLIC
             west_rhi_interface
         PRIVATE
+            west_rhi_common
             d3d12.lib
             dxgi.lib
             dxguid.lib
     )
 
-    if(WEST_HAS_DIRECTX_HEADERS_PACKAGE)
-        if(TARGET Microsoft::DirectX-Headers)
-            target_link_libraries(west_rhi_dx12 PRIVATE Microsoft::DirectX-Headers)
-        endif()
-        if(TARGET Microsoft::DirectX-Guids)
-            target_link_libraries(west_rhi_dx12 PRIVATE Microsoft::DirectX-Guids)
-        endif()
+    # D3D12MA (Phase 2)
+    if(WEST_HAS_D3D12MA)
+        target_link_libraries(west_rhi_dx12 PRIVATE GPUOpen::D3D12MemoryAllocator)
     endif()
+
+    # NOTE: We use d3d12.h from the Windows SDK directly.
+    # Do NOT link Microsoft::DirectX-Headers or DirectX-Guids here —
+    # they cause dxguids.h conflicts with D3D12MA on MSVC.
 
     west_set_compiler_options(west_rhi_dx12)
 endif()
@@ -134,6 +173,9 @@ if(WEST_HAS_VULKAN)
         rhi/vulkan/VulkanSemaphore.cpp
         rhi/vulkan/VulkanSwapChain.cpp
         rhi/vulkan/VulkanCommandList.cpp
+        rhi/vulkan/VulkanMemoryAllocator.cpp
+        rhi/vulkan/VulkanBuffer.cpp
+        rhi/vulkan/VulkanPipeline.cpp
     )
 
     file(GLOB_RECURSE WEST_RHI_VULKAN_HEADERS CONFIGURE_DEPENDS
@@ -151,7 +193,14 @@ if(WEST_HAS_VULKAN)
         PUBLIC
             west_rhi_interface
             Vulkan::Vulkan
+        PRIVATE
+            west_rhi_common
     )
+
+    # VMA (Phase 2)
+    if(WEST_HAS_VMA)
+        target_link_libraries(west_rhi_vulkan PRIVATE GPUOpen::VulkanMemoryAllocator)
+    endif()
 
     # Vulkan 1.3 minimum requirement
     target_compile_definitions(west_rhi_vulkan
@@ -162,12 +211,12 @@ if(WEST_HAS_VULKAN)
     west_set_compiler_options(west_rhi_vulkan)
 endif()
 
-if(TARGET west_platform_win32 AND TARGET west_rhi_dx12)
-    target_link_libraries(west_platform_win32 PRIVATE west_rhi_dx12)
-    target_compile_definitions(west_platform_win32 PRIVATE WEST_HAS_DX12_BACKEND)
+if(TARGET west_engine_runtime AND TARGET west_rhi_dx12)
+    target_link_libraries(west_engine_runtime PRIVATE west_rhi_dx12)
+    target_compile_definitions(west_engine_runtime PRIVATE WEST_HAS_DX12_BACKEND)
 endif()
 
-if(TARGET west_platform_win32 AND TARGET west_rhi_vulkan)
-    target_link_libraries(west_platform_win32 PRIVATE west_rhi_vulkan)
-    target_compile_definitions(west_platform_win32 PRIVATE WEST_HAS_VULKAN_BACKEND)
+if(TARGET west_engine_runtime AND TARGET west_rhi_vulkan)
+    target_link_libraries(west_engine_runtime PRIVATE west_rhi_vulkan)
+    target_compile_definitions(west_engine_runtime PRIVATE WEST_HAS_VULKAN_BACKEND)
 endif()

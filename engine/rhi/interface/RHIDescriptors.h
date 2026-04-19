@@ -27,7 +27,7 @@ struct RHIDeviceConfig
 {
     bool enableValidation = true;   // Validation Layer / Debug Layer
     bool enableGPUCrashDiag = true; // DRED / VK_EXT_device_fault
-    uint32_t preferredGPUIndex = 0; // Multi-GPU selection index
+    uint32_t preferredGPUIndex = UINT32_MAX; // UINT32_MAX = auto-select high-performance GPU
     void* windowHandle = nullptr;   // HWND (Win32)
     uint32_t windowWidth = 1920;
     uint32_t windowHeight = 1080;
@@ -49,6 +49,7 @@ struct RHIDeviceCaps
 struct RHIBufferDesc
 {
     uint64_t sizeBytes = 0;
+    uint32_t structureByteStride = 0; // Per-element stride (vertex stride, structured buffer element size)
     RHIBufferUsage usage = RHIBufferUsage::None;
     RHIMemoryType memoryType = RHIMemoryType::GPULocal;
     const char* debugName = nullptr;

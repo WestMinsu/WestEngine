@@ -7,17 +7,21 @@
 #include "core/Assert.h"
 #include "core/Logger.h"
 #include "core/Profiler.h"
+#include "rhi/interface/IRHIBuffer.h"
 #include "rhi/interface/IRHICommandList.h"
 #include "rhi/interface/IRHIDevice.h"
 #include "rhi/interface/IRHIFence.h"
+#include "rhi/interface/IRHIPipeline.h"
 #include "rhi/interface/IRHIQueue.h"
 #include "rhi/interface/IRHISemaphore.h"
 #include "rhi/interface/IRHISwapChain.h"
 #include "rhi/interface/IRHITexture.h"
 #include "rhi/interface/RHIDescriptors.h"
 #include "rhi/interface/RHIFactory.h"
+#include "rhi/common/TriangleShaderData.h"
 
 #include <cmath>
+#include <cstring>
 
 namespace west
 {
@@ -73,7 +77,7 @@ void Win32Application::InitializeRHI()
     rhi::RHIDeviceConfig config{};
     config.enableValidation = true;
     config.enableGPUCrashDiag = true;
-    config.preferredGPUIndex = 0;
+    config.preferredGPUIndex = UINT32_MAX;
     config.windowHandle = m_window->GetNativeHandle();
     config.windowWidth = m_window->GetWidth();
     config.windowHeight = m_window->GetHeight();
@@ -129,6 +133,9 @@ void Win32Application::InitializeRHI()
     }
 
     WEST_LOG_INFO(LogCategory::RHI, "Frame-in-Flight initialized (N={}).", kMaxFramesInFlight);
+
+    // Phase 2: Create triangle resources
+    InitializeTriangle();
 }
 
 void Win32Application::Run()
@@ -154,15 +161,158 @@ void Win32Application::Run()
     WEST_LOG_INFO(LogCategory::Core, "Main loop exited.");
 }
 
+// ── Triangle Setup (Phase 2) ──────────────────────────────────────────────
+
+void Win32Application::InitializeTriangle()
+{
+    WEST_PROFILE_FUNCTION();
+
+    // Vertex data: position (float3) + color (float4)
+    struct Vertex
+    {
+        float position[3];
+        float color[4];
+    };
+
+    static constexpr Vertex vertices[] = {
+        {{  0.0f,  0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f }}, // Top    — Red
+        {{  0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }}, // Right  — Green
+        {{ -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f }}, // Left   — Blue
+    };
+
+    const uint64_t vbSize = sizeof(vertices);
+    const uint32_t vertexStride = sizeof(Vertex);
+
+    // 1. Create staging buffer (Upload heap)
+    rhi::RHIBufferDesc stagingDesc{};
+    stagingDesc.sizeBytes = vbSize;
+    stagingDesc.structureByteStride = vertexStride;
+    stagingDesc.usage = rhi::RHIBufferUsage::CopySource;
+    stagingDesc.memoryType = rhi::RHIMemoryType::Upload;
+    stagingDesc.debugName = "TriangleVB_Staging";
+
+    auto staging = m_rhiDevice->CreateBuffer(stagingDesc);
+    WEST_CHECK(staging != nullptr, "Failed to create staging buffer");
+
+    // 2. Copy vertex data to staging buffer
+    void* mapped = staging->Map();
+    WEST_CHECK(mapped != nullptr, "Failed to map staging buffer");
+    std::memcpy(mapped, vertices, vbSize);
+    staging->Unmap();
+
+    // 3. Create GPU-local vertex buffer
+    rhi::RHIBufferDesc vbDesc{};
+    vbDesc.sizeBytes = vbSize;
+    vbDesc.structureByteStride = vertexStride;
+    vbDesc.usage = rhi::RHIBufferUsage::VertexBuffer | rhi::RHIBufferUsage::CopyDest;
+    vbDesc.memoryType = rhi::RHIMemoryType::GPULocal;
+    vbDesc.debugName = "TriangleVB";
+
+    m_triangleVB = m_rhiDevice->CreateBuffer(vbDesc);
+    WEST_CHECK(m_triangleVB != nullptr, "Failed to create vertex buffer");
+
+    // 4. Copy staging → GPU-local using a one-shot command list
+    auto copyCmdList = m_rhiDevice->CreateCommandList(rhi::RHIQueueType::Graphics);
+    copyCmdList->Begin();
+    copyCmdList->CopyBuffer(staging.get(), 0, m_triangleVB.get(), 0, vbSize);
+
+    // Barrier: CopyDest → VertexBuffer
+    rhi::RHIBarrierDesc barrier{};
+    barrier.type = rhi::RHIBarrierDesc::Type::Transition;
+    barrier.buffer = m_triangleVB.get();
+    barrier.stateBefore = rhi::RHIResourceState::CopyDest;
+    barrier.stateAfter = rhi::RHIResourceState::VertexBuffer;
+    copyCmdList->ResourceBarrier(barrier);
+
+    copyCmdList->End();
+
+    // Submit and wait
+    auto copyFence = m_rhiDevice->CreateFence(0);
+    rhi::RHISubmitInfo copySubmit{};
+    copySubmit.commandList = copyCmdList.get();
+    copySubmit.signalFence = copyFence.get();
+    copySubmit.signalValue = 1;
+
+    auto* queue = m_rhiDevice->GetQueue(rhi::RHIQueueType::Graphics);
+    queue->Submit(copySubmit);
+    copyFence->Wait(1);
+
+    WEST_LOG_INFO(LogCategory::RHI, "Triangle vertex buffer uploaded ({} bytes).", vbSize);
+
+    // 5. Create pipeline
+    // Select shader bytecodes based on backend
+    std::span<const uint8_t> vsData;
+    std::span<const uint8_t> psData;
+
+    if (m_backend == rhi::RHIBackend::DX12)
+    {
+        vsData = std::span<const uint8_t>(rhi::kTriangleVS_DXIL, sizeof(rhi::kTriangleVS_DXIL));
+        psData = std::span<const uint8_t>(rhi::kTrianglePS_DXIL, sizeof(rhi::kTrianglePS_DXIL));
+    }
+    else
+    {
+        vsData = std::span<const uint8_t>(rhi::kTriangleVS_SPIRV, sizeof(rhi::kTriangleVS_SPIRV));
+        psData = std::span<const uint8_t>(rhi::kTrianglePS_SPIRV, sizeof(rhi::kTrianglePS_SPIRV));
+    }
+
+    rhi::RHIVertexAttribute vertexAttribs[] = {
+        {"POSITION", rhi::RHIFormat::RGB32_FLOAT, 0},
+        {"COLOR",    rhi::RHIFormat::RGBA32_FLOAT, 12},
+    };
+
+    rhi::RHIFormat colorFormat = rhi::RHIFormat::BGRA8_UNORM;
+
+    rhi::RHIGraphicsPipelineDesc pipelineDesc{};
+    pipelineDesc.vertexShader = vsData;
+    pipelineDesc.fragmentShader = psData;
+    pipelineDesc.vertexAttributes = vertexAttribs;
+    pipelineDesc.vertexStride = vertexStride;
+    pipelineDesc.topology = rhi::RHIPrimitiveTopology::TriangleList;
+    pipelineDesc.cullMode = rhi::RHICullMode::None; // See both sides
+    pipelineDesc.depthTest = false;
+    pipelineDesc.depthWrite = false;
+    pipelineDesc.colorFormats = {&colorFormat, 1};
+    pipelineDesc.depthFormat = rhi::RHIFormat::Unknown;
+    pipelineDesc.debugName = "TrianglePipeline";
+
+    m_trianglePipeline = m_rhiDevice->CreateGraphicsPipeline(pipelineDesc);
+    WEST_CHECK(m_trianglePipeline != nullptr, "Failed to create triangle pipeline");
+
+    WEST_LOG_INFO(LogCategory::RHI, "Triangle pipeline created.");
+}
+
 void Win32Application::RenderFrame()
 {
     WEST_PROFILE_FUNCTION();
+
+    const uint32 windowWidth = m_window->GetWidth();
+    const uint32 windowHeight = m_window->GetHeight();
+    if (windowWidth == 0 || windowHeight == 0)
+    {
+        return;
+    }
+
+    if (m_swapChain)
+    {
+        auto* currentBackBuffer = m_swapChain->GetCurrentBackBuffer();
+        const auto& currentDesc = currentBackBuffer->GetDesc();
+        if (currentDesc.width != windowWidth || currentDesc.height != windowHeight)
+        {
+            ResizeSwapChain(windowWidth, windowHeight);
+        }
+    }
 
     uint32 frameIndex = static_cast<uint32>(m_frameCount % kMaxFramesInFlight);
 
     // 1. Wait for the GPU to finish using this frame's resources
     //    (N frames ago if we're ahead)
     m_frameFence->Wait(m_fenceValues[frameIndex]);
+
+    // Now that the fence is reached, we can safely destroy old resources used in that frame
+    m_rhiDevice->FlushDeferredDeletions(m_fenceValues[frameIndex]);
+
+    // Set the target fence value for any new resources deleted during this frame
+    m_rhiDevice->SetCurrentFrameFenceValue(m_fenceValues[frameIndex] + kMaxFramesInFlight); // roughly target next usage
 
     // 2. Acquire the next swapchain image
     rhi::IRHISemaphore* acquireSem = nullptr;
@@ -171,6 +321,11 @@ void Win32Application::RenderFrame()
         acquireSem = m_acquireSemaphores[frameIndex].get();
     }
     uint32 imageIndex = m_swapChain->AcquireNextImage(acquireSem);
+    if (imageIndex == UINT32_MAX)
+    {
+        ResizeSwapChain(windowWidth, windowHeight);
+        return;
+    }
 
     // 3. Record commands
     auto* cmdList = m_commandLists[frameIndex].get();
@@ -209,6 +364,20 @@ void Win32Application::RenderFrame()
     passDesc.debugName = "ClearColor Pass";
 
     cmdList->BeginRenderPass(passDesc);
+
+    // ── Phase 2: Draw Triangle ────────────────────────────────────────
+    if (m_trianglePipeline && m_triangleVB)
+    {
+        auto& texDesc = backBuffer->GetDesc();
+        cmdList->SetViewport(0.0f, 0.0f, static_cast<float>(texDesc.width),
+                             static_cast<float>(texDesc.height));
+        cmdList->SetScissor(0, 0, texDesc.width, texDesc.height);
+
+        cmdList->SetPipeline(m_trianglePipeline.get());
+        cmdList->SetVertexBuffer(0, m_triangleVB.get());
+        cmdList->Draw(3); // 3 vertices
+    }
+
     cmdList->EndRenderPass();
 
     // Transition: RenderTarget → Present
@@ -245,9 +414,38 @@ void Win32Application::RenderFrame()
     {
         presentSem = m_presentSemaphores[imageIndex].get();
     }
-    m_swapChain->Present(presentSem);
+    if (!m_swapChain->Present(presentSem))
+    {
+        ResizeSwapChain(windowWidth, windowHeight);
+    }
 
     m_frameCount++;
+}
+
+void Win32Application::ResizeSwapChain(uint32 width, uint32 height)
+{
+    if (!m_rhiDevice || !m_swapChain || width == 0 || height == 0)
+    {
+        return;
+    }
+
+    m_rhiDevice->WaitIdle();
+    m_swapChain->Resize(width, height);
+
+    const uint32 numSwapBuffers = m_swapChain->GetBufferCount();
+    m_isFirstFrame.assign(numSwapBuffers, true);
+
+    if (m_backend == rhi::RHIBackend::Vulkan)
+    {
+        m_presentSemaphores.clear();
+        m_presentSemaphores.resize(numSwapBuffers);
+        for (uint32 i = 0; i < numSwapBuffers; ++i)
+        {
+            m_presentSemaphores[i] = m_rhiDevice->CreateBinarySemaphore();
+        }
+    }
+
+    WEST_LOG_INFO(LogCategory::RHI, "SwapChain resize handled: {}x{}", width, height);
 }
 
 void Win32Application::Shutdown()
@@ -270,6 +468,8 @@ void Win32Application::ShutdownRHI()
     }
 
     // Release in reverse creation order
+    m_trianglePipeline.reset();
+    m_triangleVB.reset();
     m_presentSemaphores.clear();
     m_acquireSemaphores.clear();
     m_commandLists.clear();

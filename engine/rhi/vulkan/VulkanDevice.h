@@ -4,21 +4,24 @@
 // =============================================================================
 #pragma once
 
+#include "rhi/common/DeferredDeletionQueue.h"
 #include "rhi/interface/IRHIDevice.h"
 #include "rhi/vulkan/VulkanHelpers.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace west::rhi
 {
 
 class VulkanQueue;
+class VulkanMemoryAllocator;
 
 class VulkanDevice final : public IRHIDevice
 {
 public:
-    VulkanDevice() = default;
+    VulkanDevice();
     ~VulkanDevice() override;
 
     /// Initialize the Vulkan device with the given configuration.
@@ -61,13 +64,41 @@ public:
     {
         return m_device;
     }
+    VulkanMemoryAllocator* GetAllocator() const
+    {
+        return m_memoryAllocator.get();
+    }
+
     uint32_t GetGraphicsQueueFamily() const
     {
         return m_graphicsQueueFamily;
     }
 
+    // ── Memory Management ─────────────────────────────────────────────
+    void EnqueueDeferredDeletion(std::function<void()> deleter, uint64_t fenceValue) override
+    {
+        m_deletionQueue.Enqueue(std::move(deleter), fenceValue);
+    }
+    void FlushDeferredDeletions(uint64_t completedFenceValue) override
+    {
+        m_deletionQueue.Flush(completedFenceValue);
+    }
+    void FlushAllDeferredDeletions() override
+    {
+        m_deletionQueue.FlushAll();
+    }
+    void SetCurrentFrameFenceValue(uint64_t fenceValue) override
+    {
+        m_currentFenceValue = fenceValue;
+    }
+    uint64_t GetCurrentFrameFenceValue() const override
+    {
+        return m_currentFenceValue;
+    }
+
 private:
     void CreateInstance(bool enableValidation);
+    [[nodiscard]] bool IsValidationLayerAvailable() const;
     void SetupDebugMessenger();
     void SelectPhysicalDevice(uint32_t preferredIndex);
     void CreateLogicalDevice(bool enableValidation);
@@ -81,10 +112,15 @@ private:
     uint32_t m_graphicsQueueFamily = UINT32_MAX;
 
     std::unique_ptr<VulkanQueue> m_graphicsQueue;
+    std::unique_ptr<VulkanMemoryAllocator> m_memoryAllocator;
 
     RHIDeviceCaps m_caps{};
     std::string m_deviceName;
+    bool m_validationEnabled = false;
     bool m_deviceFaultSupported = false;
+
+    DeferredDeletionQueue m_deletionQueue;
+    uint64_t m_currentFenceValue = 0;
 
     // Debug callback
     static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,

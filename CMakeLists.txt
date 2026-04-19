@@ -6,12 +6,35 @@ cmake_minimum_required(VERSION 3.21)
 
 # ── vcpkg Toolchain ─────────────────────────────────────────────────────────
 # Must be set BEFORE project() for vcpkg manifest mode to work.
-if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-        CACHE STRING "vcpkg toolchain file")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
-    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-        CACHE STRING "vcpkg toolchain file")
+# A stale cached path causes CMakeDetermineSystem.cmake to fail before configure.
+if(DEFINED CMAKE_TOOLCHAIN_FILE AND NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}")
+    message(WARNING "Ignoring invalid CMAKE_TOOLCHAIN_FILE='${CMAKE_TOOLCHAIN_FILE}'.")
+    unset(CMAKE_TOOLCHAIN_FILE CACHE)
+    unset(CMAKE_TOOLCHAIN_FILE)
+endif()
+
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    set(_west_vcpkg_toolchain_candidates
+        "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    )
+
+    # Visual Studio ships vcpkg at VC/vcpkg; include it as a fallback.
+    file(GLOB _west_vs_vcpkg_toolchains
+        "C:/Program Files/Microsoft Visual Studio/*/*/VC/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    list(APPEND _west_vcpkg_toolchain_candidates ${_west_vs_vcpkg_toolchains})
+
+    foreach(_west_vcpkg_toolchain IN LISTS _west_vcpkg_toolchain_candidates)
+        if(EXISTS "${_west_vcpkg_toolchain}")
+            set(CMAKE_TOOLCHAIN_FILE "${_west_vcpkg_toolchain}"
+                CACHE FILEPATH "vcpkg toolchain file")
+            break()
+        endif()
+    endforeach()
+
+    unset(_west_vcpkg_toolchain)
+    unset(_west_vs_vcpkg_toolchains)
+    unset(_west_vcpkg_toolchain_candidates)
 endif()
 
 project(WestEngine
@@ -58,16 +81,17 @@ add_executable(west_engine main.cpp)
 
 target_link_libraries(west_engine
     PRIVATE
-        west_core
-        west_platform_win32
+        west_engine_runtime
 )
 
-if(TARGET west_rhi_dx12)
-    target_link_libraries(west_engine PRIVATE west_rhi_dx12)
-endif()
-
-if(TARGET west_rhi_vulkan)
-    target_link_libraries(west_engine PRIVATE west_rhi_vulkan)
+# Copy dependent runtime DLLs (vcpkg/system import DLLs) next to the exe.
+if(WIN32)
+    add_custom_command(TARGET west_engine POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:west_engine>
+            $<TARGET_FILE_DIR:west_engine>
+        COMMAND_EXPAND_LISTS
+    )
 endif()
 
 west_set_compiler_options(west_engine)

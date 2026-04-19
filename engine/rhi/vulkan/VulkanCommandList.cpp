@@ -4,7 +4,10 @@
 // =============================================================================
 #include "rhi/vulkan/VulkanCommandList.h"
 
+#include "rhi/vulkan/VulkanBuffer.h"
+#include "rhi/vulkan/VulkanPipeline.h"
 #include "rhi/vulkan/VulkanTexture.h"
+#include "rhi/common/FormatConversion.h"
 
 #include <vector>
 
@@ -126,6 +129,48 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
         vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
     }
     // TODO(minsu): Buffer barriers, aliasing barriers
+    if (desc.type == RHIBarrierDesc::Type::Transition && desc.buffer)
+    {
+        auto* vkBuf = static_cast<VulkanBuffer*>(desc.buffer);
+
+        auto convertBufferState =
+            [](RHIResourceState state) -> std::pair<VkAccessFlags2, VkPipelineStageFlags2>
+        {
+            if (HasFlag(state, RHIResourceState::VertexBuffer))
+                return {VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT};
+            if (HasFlag(state, RHIResourceState::IndexBuffer))
+                return {VK_ACCESS_2_INDEX_READ_BIT, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT};
+            if (HasFlag(state, RHIResourceState::CopyDest))
+                return {VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT};
+            if (HasFlag(state, RHIResourceState::CopySource))
+                return {VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT};
+            if (HasFlag(state, RHIResourceState::UnorderedAccess))
+                return {VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
+            return {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
+        };
+
+        auto [srcAccess, srcStage] = convertBufferState(desc.stateBefore);
+        auto [dstAccess, dstStage] = convertBufferState(desc.stateAfter);
+
+        VkBufferMemoryBarrier2 bufBarrier{};
+        bufBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+        bufBarrier.srcStageMask = srcStage;
+        bufBarrier.srcAccessMask = srcAccess;
+        bufBarrier.dstStageMask = dstStage;
+        bufBarrier.dstAccessMask = dstAccess;
+        bufBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bufBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bufBarrier.buffer = vkBuf->GetVkBuffer();
+        bufBarrier.offset = 0;
+        bufBarrier.size = VK_WHOLE_SIZE;
+
+        VkDependencyInfo depInfo{};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        depInfo.bufferMemoryBarrierCount = 1;
+        depInfo.pBufferMemoryBarriers = &bufBarrier;
+
+        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
+    }
 }
 
 // ── Viewport & Scissor ────────────────────────────────────────────────────
@@ -133,10 +178,11 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
 void VulkanCommandList::SetViewport(float x, float y, float w, float h, float minDepth, float maxDepth)
 {
     VkViewport viewport{};
+    // Use negative viewport height matching DX12 NDC coordinates (Y-up clip space)
     viewport.x = x;
-    viewport.y = y;
+    viewport.y = y + h;
     viewport.width = w;
-    viewport.height = h;
+    viewport.height = -h;
     viewport.minDepth = minDepth;
     viewport.maxDepth = maxDepth;
     vkCmdSetViewport(m_cmdBuffer, 0, 1, &viewport);
@@ -212,9 +258,11 @@ void VulkanCommandList::EndRenderPass()
 
 // ── Stub implementations (Phase 2+) ──────────────────────────────────────
 
-void VulkanCommandList::SetPipeline(IRHIPipeline* /*pipeline*/)
+void VulkanCommandList::SetPipeline(IRHIPipeline* pipeline)
 {
-    // TODO(minsu): Phase 4
+    auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
+    WEST_ASSERT(vkPipeline != nullptr);
+    vkCmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->GetVkPipeline());
 }
 
 void VulkanCommandList::SetPushConstants(const void* /*data*/, uint32_t /*sizeBytes*/)
@@ -222,26 +270,33 @@ void VulkanCommandList::SetPushConstants(const void* /*data*/, uint32_t /*sizeBy
     // TODO(minsu): Phase 3
 }
 
-void VulkanCommandList::SetVertexBuffer(uint32_t /*slot*/, IRHIBuffer* /*buffer*/, uint64_t /*offset*/)
+void VulkanCommandList::SetVertexBuffer(uint32_t slot, IRHIBuffer* buffer, uint64_t offset)
 {
-    // TODO(minsu): Phase 2
+    auto* vkBuf = static_cast<VulkanBuffer*>(buffer);
+    WEST_ASSERT(vkBuf != nullptr);
+    VkBuffer buffers[] = {vkBuf->GetVkBuffer()};
+    VkDeviceSize offsets[] = {offset};
+    vkCmdBindVertexBuffers(m_cmdBuffer, slot, 1, buffers, offsets);
 }
 
-void VulkanCommandList::SetIndexBuffer(IRHIBuffer* /*buffer*/, RHIFormat /*format*/, uint64_t /*offset*/)
+void VulkanCommandList::SetIndexBuffer(IRHIBuffer* buffer, RHIFormat format, uint64_t offset)
 {
-    // TODO(minsu): Phase 2
+    auto* vkBuf = static_cast<VulkanBuffer*>(buffer);
+    WEST_ASSERT(vkBuf != nullptr);
+    VkIndexType indexType = (format == RHIFormat::R32_UINT) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    vkCmdBindIndexBuffer(m_cmdBuffer, vkBuf->GetVkBuffer(), offset, indexType);
 }
 
-void VulkanCommandList::Draw(uint32_t /*vertexCount*/, uint32_t /*instanceCount*/, uint32_t /*firstVertex*/,
-                             uint32_t /*firstInstance*/)
+void VulkanCommandList::Draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex,
+                             uint32_t firstInstance)
 {
-    // TODO(minsu): Phase 4
+    vkCmdDraw(m_cmdBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
-void VulkanCommandList::DrawIndexed(uint32_t /*indexCount*/, uint32_t /*instanceCount*/, uint32_t /*firstIndex*/,
-                                    int32_t /*vertexOffset*/, uint32_t /*firstInstance*/)
+void VulkanCommandList::DrawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex,
+                                    int32_t vertexOffset, uint32_t firstInstance)
 {
-    // TODO(minsu): Phase 4
+    vkCmdDrawIndexed(m_cmdBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
 void VulkanCommandList::DrawIndexedIndirectCount(IRHIBuffer* /*argsBuffer*/, uint64_t /*argsOffset*/,
@@ -256,10 +311,18 @@ void VulkanCommandList::Dispatch(uint32_t /*groupCountX*/, uint32_t /*groupCount
     // TODO(minsu): Phase 4
 }
 
-void VulkanCommandList::CopyBuffer(IRHIBuffer* /*src*/, uint64_t /*srcOffset*/, IRHIBuffer* /*dst*/,
-                                   uint64_t /*dstOffset*/, uint64_t /*size*/)
+void VulkanCommandList::CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst,
+                                   uint64_t dstOffset, uint64_t size)
 {
-    // TODO(minsu): Phase 2
+    auto* vkSrc = static_cast<VulkanBuffer*>(src);
+    auto* vkDst = static_cast<VulkanBuffer*>(dst);
+    WEST_ASSERT(vkSrc != nullptr && vkDst != nullptr);
+
+    VkBufferCopy copyRegion{};
+    copyRegion.srcOffset = srcOffset;
+    copyRegion.dstOffset = dstOffset;
+    copyRegion.size = size;
+    vkCmdCopyBuffer(m_cmdBuffer, vkSrc->GetVkBuffer(), vkDst->GetVkBuffer(), 1, &copyRegion);
 }
 
 void VulkanCommandList::CopyBufferToTexture(IRHIBuffer* /*src*/, IRHITexture* /*dst*/, const RHICopyRegion& /*region*/)

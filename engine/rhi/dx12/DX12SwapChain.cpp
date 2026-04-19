@@ -148,7 +148,7 @@ uint32_t DX12SwapChain::AcquireNextImage(IRHISemaphore* /*acquireSemaphore*/)
     return m_currentIndex;
 }
 
-void DX12SwapChain::Present(IRHISemaphore* /*presentSemaphore*/)
+bool DX12SwapChain::Present(IRHISemaphore* /*presentSemaphore*/)
 {
     UINT syncInterval = m_vsync ? 1 : 0;
     UINT presentFlags = 0;
@@ -164,7 +164,11 @@ void DX12SwapChain::Present(IRHISemaphore* /*presentSemaphore*/)
     {
         WEST_LOG_FATAL(LogCategory::RHI, "Device removed during Present! HRESULT: 0x{:08X}", static_cast<uint32_t>(hr));
         // DRED data will be queried in DX12Device destructor
+        return false;
     }
+
+    WEST_HR_CHECK(hr);
+    return true;
 }
 
 IRHITexture* DX12SwapChain::GetCurrentBackBuffer()

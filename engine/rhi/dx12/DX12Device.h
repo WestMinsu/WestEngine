@@ -5,17 +5,21 @@
 #pragma once
 
 #include "rhi/dx12/DX12Helpers.h"
+#include "rhi/common/DeferredDeletionQueue.h"
 #include "rhi/interface/IRHIDevice.h"
+
+#include <utility>
 
 namespace west::rhi
 {
 
 class DX12Queue;
+class DX12MemoryAllocator;
 
 class DX12Device final : public IRHIDevice
 {
 public:
-    DX12Device() = default;
+    DX12Device();
     ~DX12Device() override;
 
     /// Initialize the DX12 device with the given configuration.
@@ -55,9 +59,35 @@ public:
     {
         return m_factory.Get();
     }
+    DX12MemoryAllocator* GetMemoryAllocator()
+    {
+        return m_memoryAllocator.get();
+    }
+
+    // ── Memory Management ─────────────────────────────────────────────
+    void EnqueueDeferredDeletion(std::function<void()> deleter, uint64_t fenceValue) override
+    {
+        m_deletionQueue.Enqueue(std::move(deleter), fenceValue);
+    }
+    void FlushDeferredDeletions(uint64_t completedFenceValue) override
+    {
+        m_deletionQueue.Flush(completedFenceValue);
+    }
+    void FlushAllDeferredDeletions() override
+    {
+        m_deletionQueue.FlushAll();
+    }
+    void SetCurrentFrameFenceValue(uint64_t fenceValue) override
+    {
+        m_currentFenceValue = fenceValue;
+    }
+    uint64_t GetCurrentFrameFenceValue() const override
+    {
+        return m_currentFenceValue;
+    }
 
 private:
-    void EnableDebugLayer(bool enableGBV);
+    [[nodiscard]] bool EnableDebugLayer(bool enableGBV);
     void EnableDRED();
     void SelectAdapter(uint32_t preferredIndex);
     void CreateDevice();
@@ -70,11 +100,15 @@ private:
     DXGI_ADAPTER_DESC3 m_adapterDesc{};
 
     std::unique_ptr<DX12Queue> m_graphicsQueue;
+    std::unique_ptr<DX12MemoryAllocator> m_memoryAllocator;
     // TODO(minsu): Phase 3 — Compute and Copy queues
 
     RHIDeviceCaps m_caps{};
     std::string m_deviceName;
     bool m_dredEnabled = false;
+
+    DeferredDeletionQueue m_deletionQueue;
+    uint64_t m_currentFenceValue = 0;
 };
 
 } // namespace west::rhi

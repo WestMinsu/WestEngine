@@ -4,7 +4,10 @@
 // =============================================================================
 #include "rhi/dx12/DX12CommandList.h"
 
+#include "rhi/dx12/DX12Buffer.h"
+#include "rhi/dx12/DX12Pipeline.h"
 #include "rhi/dx12/DX12Texture.h"
+#include "rhi/common/FormatConversion.h"
 
 #include <vector>
 
@@ -75,6 +78,11 @@ void DX12CommandList::ResourceBarrier(const RHIBarrierDesc& desc)
             resource = dx12Tex->GetD3DResource();
         }
         // TODO(minsu): Phase 2 — buffer barriers via DX12Buffer
+        if (desc.buffer)
+        {
+            auto* dx12Buf = static_cast<DX12Buffer*>(desc.buffer);
+            resource = dx12Buf->GetD3DResource();
+        }
 
         if (!resource)
         {
@@ -180,9 +188,13 @@ void DX12CommandList::EndRenderPass()
 
 // ── Stub implementations (Phase 2+) ──────────────────────────────────────
 
-void DX12CommandList::SetPipeline(IRHIPipeline* /*pipeline*/)
+void DX12CommandList::SetPipeline(IRHIPipeline* pipeline)
 {
-    // TODO(minsu): Phase 4 — SetPipelineState + SetGraphicsRootSignature
+    auto* dx12Pipeline = static_cast<DX12Pipeline*>(pipeline);
+    WEST_ASSERT(dx12Pipeline != nullptr);
+    m_cmdList->SetPipelineState(dx12Pipeline->GetPipelineState());
+    m_cmdList->SetGraphicsRootSignature(dx12Pipeline->GetRootSignature());
+    m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 }
 
 void DX12CommandList::SetPushConstants(const void* /*data*/, uint32_t /*sizeBytes*/)
@@ -190,26 +202,40 @@ void DX12CommandList::SetPushConstants(const void* /*data*/, uint32_t /*sizeByte
     // TODO(minsu): Phase 3 — SetGraphicsRoot32BitConstants
 }
 
-void DX12CommandList::SetVertexBuffer(uint32_t /*slot*/, IRHIBuffer* /*buffer*/, uint64_t /*offset*/)
+void DX12CommandList::SetVertexBuffer(uint32_t slot, IRHIBuffer* buffer, uint64_t offset)
 {
-    // TODO(minsu): Phase 2 — IASetVertexBuffers
+    auto* dx12Buffer = static_cast<DX12Buffer*>(buffer);
+    WEST_ASSERT(dx12Buffer != nullptr);
+
+    D3D12_VERTEX_BUFFER_VIEW vbView{};
+    vbView.BufferLocation = dx12Buffer->GetGPUVirtualAddress() + offset;
+    vbView.SizeInBytes = static_cast<UINT>(dx12Buffer->GetDesc().sizeBytes - offset);
+    vbView.StrideInBytes = dx12Buffer->GetDesc().structureByteStride;
+    m_cmdList->IASetVertexBuffers(slot, 1, &vbView);
 }
 
-void DX12CommandList::SetIndexBuffer(IRHIBuffer* /*buffer*/, RHIFormat /*format*/, uint64_t /*offset*/)
+void DX12CommandList::SetIndexBuffer(IRHIBuffer* buffer, RHIFormat format, uint64_t offset)
 {
-    // TODO(minsu): Phase 2 — IASetIndexBuffer
+    auto* dx12Buffer = static_cast<DX12Buffer*>(buffer);
+    WEST_ASSERT(dx12Buffer != nullptr);
+
+    D3D12_INDEX_BUFFER_VIEW ibView{};
+    ibView.BufferLocation = dx12Buffer->GetGPUVirtualAddress() + offset;
+    ibView.SizeInBytes = static_cast<UINT>(dx12Buffer->GetDesc().sizeBytes - offset);
+    ibView.Format = static_cast<DXGI_FORMAT>(ToDXGIFormat(format));
+    m_cmdList->IASetIndexBuffer(&ibView);
 }
 
-void DX12CommandList::Draw(uint32_t /*vertexCount*/, uint32_t /*instanceCount*/, uint32_t /*firstVertex*/,
-                           uint32_t /*firstInstance*/)
+void DX12CommandList::Draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex,
+                           uint32_t firstInstance)
 {
-    // TODO(minsu): Phase 4 — DrawInstanced
+    m_cmdList->DrawInstanced(vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
-void DX12CommandList::DrawIndexed(uint32_t /*indexCount*/, uint32_t /*instanceCount*/, uint32_t /*firstIndex*/,
-                                  int32_t /*vertexOffset*/, uint32_t /*firstInstance*/)
+void DX12CommandList::DrawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex,
+                                  int32_t vertexOffset, uint32_t firstInstance)
 {
-    // TODO(minsu): Phase 4 — DrawIndexedInstanced
+    m_cmdList->DrawIndexedInstanced(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
 void DX12CommandList::DrawIndexedIndirectCount(IRHIBuffer* /*argsBuffer*/, uint64_t /*argsOffset*/,
@@ -224,10 +250,15 @@ void DX12CommandList::Dispatch(uint32_t /*groupCountX*/, uint32_t /*groupCountY*
     // TODO(minsu): Phase 4 — Dispatch
 }
 
-void DX12CommandList::CopyBuffer(IRHIBuffer* /*src*/, uint64_t /*srcOffset*/, IRHIBuffer* /*dst*/,
-                                 uint64_t /*dstOffset*/, uint64_t /*size*/)
+void DX12CommandList::CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst,
+                                 uint64_t dstOffset, uint64_t size)
 {
-    // TODO(minsu): Phase 2 — CopyBufferRegion
+    auto* dx12Src = static_cast<DX12Buffer*>(src);
+    auto* dx12Dst = static_cast<DX12Buffer*>(dst);
+    WEST_ASSERT(dx12Src != nullptr && dx12Dst != nullptr);
+
+    m_cmdList->CopyBufferRegion(dx12Dst->GetD3DResource(), dstOffset,
+                                dx12Src->GetD3DResource(), srcOffset, size);
 }
 
 void DX12CommandList::CopyBufferToTexture(IRHIBuffer* /*src*/, IRHITexture* /*dst*/, const RHICopyRegion& /*region*/)

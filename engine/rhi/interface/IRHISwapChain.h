@@ -24,8 +24,9 @@ public:
     virtual uint32_t AcquireNextImage(IRHISemaphore* acquireSemaphore = nullptr) = 0;
 
     /// Present the current frame to the display.
+    /// @return true when presented successfully, false when the swap chain should be resized.
     /// @param presentSemaphore  Vulkan: wait before present / DX12: ignored
-    virtual void Present(IRHISemaphore* presentSemaphore = nullptr) = 0;
+    virtual bool Present(IRHISemaphore* presentSemaphore = nullptr) = 0;
 
     /// Get the current back buffer as an IRHITexture.
     virtual IRHITexture* GetCurrentBackBuffer() = 0;

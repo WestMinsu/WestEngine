@@ -239,6 +239,7 @@ uint32_t VulkanSwapChain::AcquireNextImage(IRHISemaphore* acquireSemaphore)
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
         WEST_LOG_WARNING(LogCategory::RHI, "Swapchain out of date — resize needed");
+        return UINT32_MAX;
     }
     else if (result != VK_SUBOPTIMAL_KHR)
     {
@@ -248,7 +249,7 @@ uint32_t VulkanSwapChain::AcquireNextImage(IRHISemaphore* acquireSemaphore)
     return m_currentIndex;
 }
 
-void VulkanSwapChain::Present(IRHISemaphore* presentSemaphore)
+bool VulkanSwapChain::Present(IRHISemaphore* presentSemaphore)
 {
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -270,11 +271,14 @@ void VulkanSwapChain::Present(IRHISemaphore* presentSemaphore)
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
         WEST_LOG_WARNING(LogCategory::RHI, "Swapchain needs resize after present");
+        return false;
     }
     else
     {
         WEST_VK_CHECK(result);
     }
+
+    return true;
 }
 
 IRHITexture* VulkanSwapChain::GetCurrentBackBuffer()

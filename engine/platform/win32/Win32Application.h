@@ -19,6 +19,8 @@ class IRHISwapChain;
 class IRHIFence;
 class IRHISemaphore;
 class IRHICommandList;
+class IRHIBuffer;
+class IRHIPipeline;
 } // namespace west::rhi
 
 namespace west
@@ -43,8 +45,10 @@ public:
 
 private:
     void InitializeRHI();
+    void InitializeTriangle();
     void ShutdownRHI();
     void RenderFrame();
+    void ResizeSwapChain(uint32 width, uint32 height);
 
     // ── Platform ──────────────────────────────────────────────────────
     std::unique_ptr<Win32Window> m_window;
@@ -68,6 +72,10 @@ private:
     std::vector<bool> m_isFirstFrame; // Tracks if a swapchain image is being used for the very first time
 
     uint64 m_frameCount = 0;
+
+    // ── Phase 2: Triangle Resources ───────────────────────────────────
+    std::unique_ptr<rhi::IRHIBuffer> m_triangleVB;
+    std::unique_ptr<rhi::IRHIPipeline> m_trianglePipeline;
 };
 
 } // namespace west

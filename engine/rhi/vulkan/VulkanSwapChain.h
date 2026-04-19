@@ -25,7 +25,7 @@ public:
 
     // ── IRHISwapChain interface ───────────────────────────────────────
     uint32_t AcquireNextImage(IRHISemaphore* acquireSemaphore = nullptr) override;
-    void Present(IRHISemaphore* presentSemaphore = nullptr) override;
+    bool Present(IRHISemaphore* presentSemaphore = nullptr) override;
     IRHITexture* GetCurrentBackBuffer() override;
     void Resize(uint32_t width, uint32_t height) override;
     uint32_t GetCurrentIndex() const override
