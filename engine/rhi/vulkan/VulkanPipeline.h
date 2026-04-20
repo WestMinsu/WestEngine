@@ -18,7 +18,8 @@ public:
     VulkanPipeline() = default;
     ~VulkanPipeline() override;
 
-    void Initialize(VkDevice device, const RHIGraphicsPipelineDesc& desc, VkFormat swapChainFormat);
+    void Initialize(VkDevice device, const RHIGraphicsPipelineDesc& desc, VkFormat swapChainFormat,
+                    VkDescriptorSetLayout bindlessSetLayout);
 
     // ── IRHIPipeline interface ────────────────────────────────────────
     uint64_t GetPSOHash() const override { return m_psoHash; }

@@ -24,10 +24,16 @@ VulkanCommandList::~VulkanCommandList()
     }
 }
 
-void VulkanCommandList::Initialize(VkDevice device, uint32_t queueFamilyIndex, RHIQueueType type)
+void VulkanCommandList::Initialize(VkDevice device, uint32_t queueFamilyIndex, RHIQueueType type,
+                                   VkDeviceAddress bindlessDescriptorBufferAddress,
+                                   PFN_vkCmdBindDescriptorBuffersEXT bindDescriptorBuffers,
+                                   PFN_vkCmdSetDescriptorBufferOffsetsEXT setDescriptorBufferOffsets)
 {
     m_device = device;
     m_queueType = type;
+    m_bindlessDescriptorBufferAddress = bindlessDescriptorBufferAddress;
+    m_vkCmdBindDescriptorBuffersEXT = bindDescriptorBuffers;
+    m_vkCmdSetDescriptorBufferOffsetsEXT = setDescriptorBufferOffsets;
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -263,11 +269,33 @@ void VulkanCommandList::SetPipeline(IRHIPipeline* pipeline)
     auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
     WEST_ASSERT(vkPipeline != nullptr);
     vkCmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->GetVkPipeline());
+    m_currentPipelineLayout = vkPipeline->GetVkPipelineLayout();
+
+    if (m_bindlessDescriptorBufferAddress != 0 && m_vkCmdBindDescriptorBuffersEXT &&
+        m_vkCmdSetDescriptorBufferOffsetsEXT)
+    {
+        VkDescriptorBufferBindingInfoEXT bindingInfo{};
+        bindingInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT;
+        bindingInfo.address = m_bindlessDescriptorBufferAddress;
+        bindingInfo.usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT |
+                            VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT;
+
+        m_vkCmdBindDescriptorBuffersEXT(m_cmdBuffer, 1, &bindingInfo);
+
+        uint32_t bufferIndex = 0;
+        VkDeviceSize descriptorOffset = 0;
+        m_vkCmdSetDescriptorBufferOffsetsEXT(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                             m_currentPipelineLayout, 0, 1,
+                                             &bufferIndex, &descriptorOffset);
+    }
 }
 
-void VulkanCommandList::SetPushConstants(const void* /*data*/, uint32_t /*sizeBytes*/)
+void VulkanCommandList::SetPushConstants(const void* data, uint32_t sizeBytes)
 {
-    // TODO(minsu): Phase 3
+    WEST_ASSERT(data != nullptr);
+    WEST_ASSERT(sizeBytes > 0);
+    WEST_ASSERT(m_currentPipelineLayout != VK_NULL_HANDLE);
+    vkCmdPushConstants(m_cmdBuffer, m_currentPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeBytes, data);
 }
 
 void VulkanCommandList::SetVertexBuffer(uint32_t slot, IRHIBuffer* buffer, uint64_t offset)
@@ -325,9 +353,26 @@ void VulkanCommandList::CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuff
     vkCmdCopyBuffer(m_cmdBuffer, vkSrc->GetVkBuffer(), vkDst->GetVkBuffer(), 1, &copyRegion);
 }
 
-void VulkanCommandList::CopyBufferToTexture(IRHIBuffer* /*src*/, IRHITexture* /*dst*/, const RHICopyRegion& /*region*/)
+void VulkanCommandList::CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, const RHICopyRegion& region)
 {
-    // TODO(minsu): Phase 2
+    auto* vkSrc = static_cast<VulkanBuffer*>(src);
+    auto* vkDst = static_cast<VulkanTexture*>(dst);
+    WEST_ASSERT(vkSrc != nullptr && vkDst != nullptr);
+
+    VkBufferImageCopy copy{};
+    copy.bufferOffset = region.bufferOffset;
+    copy.bufferRowLength = region.bufferRowLength;
+    copy.bufferImageHeight = region.bufferImageHeight;
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.mipLevel = region.mipLevel;
+    copy.imageSubresource.baseArrayLayer = region.arrayLayer;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageOffset = {static_cast<int32_t>(region.texOffsetX), static_cast<int32_t>(region.texOffsetY),
+                        static_cast<int32_t>(region.texOffsetZ)};
+    copy.imageExtent = {region.texWidth, region.texHeight, region.texDepth};
+
+    vkCmdCopyBufferToImage(m_cmdBuffer, vkSrc->GetVkBuffer(), vkDst->GetVkImage(),
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 }
 
 void VulkanCommandList::WriteTimestamp(IRHIBuffer* /*queryBuffer*/, uint32_t /*index*/)

@@ -12,6 +12,46 @@
 namespace west::rhi
 {
 
+static VkPrimitiveTopology ToVkPrimitiveTopology(RHIPrimitiveTopology topology)
+{
+    switch (topology)
+    {
+    case RHIPrimitiveTopology::TriangleStrip:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case RHIPrimitiveTopology::LineList:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case RHIPrimitiveTopology::PointList:
+        return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case RHIPrimitiveTopology::TriangleList:
+    default:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    }
+}
+
+static VkCompareOp ToVkCompareOp(RHICompareOp op)
+{
+    switch (op)
+    {
+    case RHICompareOp::Never:
+        return VK_COMPARE_OP_NEVER;
+    case RHICompareOp::Less:
+        return VK_COMPARE_OP_LESS;
+    case RHICompareOp::Equal:
+        return VK_COMPARE_OP_EQUAL;
+    case RHICompareOp::LessEqual:
+        return VK_COMPARE_OP_LESS_OR_EQUAL;
+    case RHICompareOp::Greater:
+        return VK_COMPARE_OP_GREATER;
+    case RHICompareOp::NotEqual:
+        return VK_COMPARE_OP_NOT_EQUAL;
+    case RHICompareOp::GreaterEqual:
+        return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    case RHICompareOp::Always:
+    default:
+        return VK_COMPARE_OP_ALWAYS;
+    }
+}
+
 VulkanPipeline::~VulkanPipeline()
 {
     if (m_pipeline && m_device)
@@ -26,16 +66,23 @@ VulkanPipeline::~VulkanPipeline()
     }
 }
 
-void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& desc, VkFormat swapChainFormat)
+void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& desc, VkFormat swapChainFormat,
+                                VkDescriptorSetLayout bindlessSetLayout)
 {
     WEST_ASSERT(device != VK_NULL_HANDLE);
     m_device = device;
 
-    // ── Pipeline Layout (Phase 2: empty — no descriptors, no push constants) ──
+    VkPushConstantRange pushConstants{};
+    pushConstants.stageFlags = VK_SHADER_STAGE_ALL;
+    pushConstants.offset = 0;
+    pushConstants.size = sizeof(uint32_t) * 2; // textureIndex, samplerIndex
+
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 0;
-    layoutInfo.pushConstantRangeCount = 0;
+    layoutInfo.setLayoutCount = bindlessSetLayout != VK_NULL_HANDLE ? 1 : 0;
+    layoutInfo.pSetLayouts = bindlessSetLayout != VK_NULL_HANDLE ? &bindlessSetLayout : nullptr;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pushConstants;
 
     WEST_VK_CHECK(vkCreatePipelineLayout(device, &layoutInfo, nullptr, &m_pipelineLayout));
 
@@ -94,7 +141,7 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
     // ── Input Assembly ──
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.topology = ToVkPrimitiveTopology(desc.topology);
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
     // ── Dynamic State (Viewport + Scissor) ──
@@ -135,7 +182,7 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = desc.depthTest ? VK_TRUE : VK_FALSE;
     depthStencil.depthWriteEnable = desc.depthWrite ? VK_TRUE : VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthCompareOp = ToVkCompareOp(desc.depthCompare);
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
 
@@ -169,6 +216,7 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
     // ── Create Pipeline ──
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     pipelineInfo.pNext = &renderingInfo;
     pipelineInfo.stageCount = 2;
     pipelineInfo.pStages = shaderStages;

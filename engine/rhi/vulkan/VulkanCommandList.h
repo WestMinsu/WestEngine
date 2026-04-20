@@ -16,7 +16,10 @@ public:
     VulkanCommandList() = default;
     ~VulkanCommandList() override;
 
-    void Initialize(VkDevice device, uint32_t queueFamilyIndex, RHIQueueType type);
+    void Initialize(VkDevice device, uint32_t queueFamilyIndex, RHIQueueType type,
+                    VkDeviceAddress bindlessDescriptorBufferAddress,
+                    PFN_vkCmdBindDescriptorBuffersEXT bindDescriptorBuffers,
+                    PFN_vkCmdSetDescriptorBufferOffsetsEXT setDescriptorBufferOffsets);
 
     // ── IRHICommandList interface ─────────────────────────────────────
     void Begin() override;
@@ -61,6 +64,10 @@ private:
     VkDevice m_device = VK_NULL_HANDLE;
     VkCommandPool m_cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmdBuffer = VK_NULL_HANDLE;
+    VkDeviceAddress m_bindlessDescriptorBufferAddress = 0;
+    PFN_vkCmdBindDescriptorBuffersEXT m_vkCmdBindDescriptorBuffersEXT = nullptr;
+    PFN_vkCmdSetDescriptorBufferOffsetsEXT m_vkCmdSetDescriptorBufferOffsetsEXT = nullptr;
+    VkPipelineLayout m_currentPipelineLayout = VK_NULL_HANDLE;
     RHIQueueType m_queueType = RHIQueueType::Graphics;
 };
 

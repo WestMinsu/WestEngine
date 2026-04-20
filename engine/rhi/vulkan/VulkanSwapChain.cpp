@@ -74,7 +74,7 @@ void VulkanSwapChain::CreateSurface(void* windowHandle)
     WEST_VK_CHECK(vkCreateWin32SurfaceKHR(m_device->GetVkInstance(), &surfaceInfo, nullptr, &m_surface));
 }
 
-void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height)
+void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height, VkSwapchainKHR oldSwapChain)
 {
     VkPhysicalDevice physDevice = m_device->GetVkPhysicalDevice();
 
@@ -161,7 +161,7 @@ void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height)
     swapChainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapChainInfo.presentMode = presentMode;
     swapChainInfo.clipped = VK_TRUE;
-    swapChainInfo.oldSwapchain = VK_NULL_HANDLE;
+    swapChainInfo.oldSwapchain = oldSwapChain;
 
     WEST_VK_CHECK(vkCreateSwapchainKHR(m_device->GetVkDevice(), &swapChainInfo, nullptr, &m_swapChain));
 
@@ -169,6 +169,7 @@ void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height)
     vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &m_bufferCount, nullptr);
     m_images.resize(m_bufferCount);
     vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &m_bufferCount, m_images.data());
+    m_currentIndex = 0;
 }
 
 void VulkanSwapChain::CreateImageViews()
@@ -293,12 +294,11 @@ void VulkanSwapChain::Resize(uint32_t width, uint32_t height)
 
     vkDeviceWaitIdle(m_device->GetVkDevice());
 
+    VkSwapchainKHR oldSwapChain = m_swapChain;
+
     DestroySwapChainResources();
 
-    VkSwapchainKHR oldSwapChain = m_swapChain;
-    m_swapChain = VK_NULL_HANDLE;
-
-    CreateSwapChain(width, height);
+    CreateSwapChain(width, height, oldSwapChain);
     CreateImageViews();
 
     if (oldSwapChain)
@@ -307,15 +307,6 @@ void VulkanSwapChain::Resize(uint32_t width, uint32_t height)
     }
 
     WEST_LOG_INFO(LogCategory::RHI, "Vulkan SwapChain resized: {}x{}", width, height);
-}
-
-// ── VulkanTexture helper ──────────────────────────────────────────────────
-
-void VulkanTexture::InitFromSwapChain(VkImage image, VkImageView imageView, const RHITextureDesc& desc)
-{
-    m_image = image;
-    m_imageView = imageView;
-    m_desc = desc;
 }
 
 } // namespace west::rhi

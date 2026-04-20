@@ -26,12 +26,14 @@ public:
     // ── Internal ──────────────────────────────────────────────────────
     ID3D12PipelineState* GetPipelineState() const { return m_pso.Get(); }
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature.Get(); }
+    D3D_PRIMITIVE_TOPOLOGY GetPrimitiveTopology() const { return m_primitiveTopology; }
 
 private:
     void CreateRootSignature(ID3D12Device* device);
 
     ComPtr<ID3D12PipelineState> m_pso;
     ComPtr<ID3D12RootSignature> m_rootSignature;
+    D3D_PRIMITIVE_TOPOLOGY m_primitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     uint64_t m_psoHash = 0;
 };
 

@@ -10,6 +10,7 @@ add_library(west_core STATIC
     core/Memory/LinearAllocator.cpp
     core/Memory/StackAllocator.cpp
     core/Memory/PoolAllocator.cpp
+    core/Threading/TaskSystem.cpp
 )
 
 file(GLOB_RECURSE WEST_CORE_HEADERS CONFIGURE_DEPENDS
@@ -101,6 +102,7 @@ target_link_libraries(west_rhi_interface
 add_library(west_rhi_common STATIC
     rhi/common/FormatConversion.cpp
     rhi/common/DeferredDeletionQueue.cpp
+    rhi/common/BindlessPool.cpp
 )
 
 file(GLOB_RECURSE WEST_RHI_COMMON_HEADERS CONFIGURE_DEPENDS
@@ -127,6 +129,8 @@ if(WIN32 AND WEST_HAS_DX12)
         rhi/dx12/DX12CommandList.cpp
         rhi/dx12/DX12MemoryAllocator.cpp
         rhi/dx12/DX12Buffer.cpp
+        rhi/dx12/DX12Texture.cpp
+        rhi/dx12/DX12Sampler.cpp
         rhi/dx12/DX12Pipeline.cpp
     )
 
@@ -175,6 +179,8 @@ if(WEST_HAS_VULKAN)
         rhi/vulkan/VulkanCommandList.cpp
         rhi/vulkan/VulkanMemoryAllocator.cpp
         rhi/vulkan/VulkanBuffer.cpp
+        rhi/vulkan/VulkanTexture.cpp
+        rhi/vulkan/VulkanSampler.cpp
         rhi/vulkan/VulkanPipeline.cpp
     )
 

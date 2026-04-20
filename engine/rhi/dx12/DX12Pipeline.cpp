@@ -7,26 +7,119 @@
 #include "rhi/common/FormatConversion.h"
 #include "rhi/interface/RHIDescriptors.h"
 
+#include <d3d12sdklayers.h>
 #include <vector>
 
 namespace west::rhi
 {
 
+static void LogD3D12InfoQueueMessages(ID3D12Device* device, const char* context)
+{
+    ComPtr<ID3D12InfoQueue> infoQueue;
+    if (!device || FAILED(device->QueryInterface(IID_PPV_ARGS(&infoQueue))))
+    {
+        return;
+    }
+
+    const UINT64 messageCount = infoQueue->GetNumStoredMessages();
+    const UINT64 firstMessage = messageCount > 16 ? messageCount - 16 : 0;
+
+    for (UINT64 i = firstMessage; i < messageCount; ++i)
+    {
+        SIZE_T messageLength = 0;
+        if (FAILED(infoQueue->GetMessage(i, nullptr, &messageLength)) || messageLength == 0)
+        {
+            continue;
+        }
+
+        std::vector<uint8_t> messageStorage(messageLength);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageStorage.data());
+        if (SUCCEEDED(infoQueue->GetMessage(i, message, &messageLength)))
+        {
+            WEST_LOG_ERROR(LogCategory::RHI, "D3D12 {}: {}", context, message->pDescription);
+        }
+    }
+}
+
+static D3D12_COMPARISON_FUNC ToD3D12CompareOp(RHICompareOp op)
+{
+    switch (op)
+    {
+    case RHICompareOp::Never:
+        return D3D12_COMPARISON_FUNC_NEVER;
+    case RHICompareOp::Less:
+        return D3D12_COMPARISON_FUNC_LESS;
+    case RHICompareOp::Equal:
+        return D3D12_COMPARISON_FUNC_EQUAL;
+    case RHICompareOp::LessEqual:
+        return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    case RHICompareOp::Greater:
+        return D3D12_COMPARISON_FUNC_GREATER;
+    case RHICompareOp::NotEqual:
+        return D3D12_COMPARISON_FUNC_NOT_EQUAL;
+    case RHICompareOp::GreaterEqual:
+        return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+    case RHICompareOp::Always:
+    default:
+        return D3D12_COMPARISON_FUNC_ALWAYS;
+    }
+}
+
+static D3D12_PRIMITIVE_TOPOLOGY_TYPE ToD3D12PrimitiveTopologyType(RHIPrimitiveTopology topology)
+{
+    switch (topology)
+    {
+    case RHIPrimitiveTopology::LineList:
+        return D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+    case RHIPrimitiveTopology::PointList:
+        return D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+    case RHIPrimitiveTopology::TriangleList:
+    case RHIPrimitiveTopology::TriangleStrip:
+    default:
+        return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    }
+}
+
+static D3D_PRIMITIVE_TOPOLOGY ToD3D12PrimitiveTopology(RHIPrimitiveTopology topology)
+{
+    switch (topology)
+    {
+    case RHIPrimitiveTopology::TriangleStrip:
+        return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+    case RHIPrimitiveTopology::LineList:
+        return D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+    case RHIPrimitiveTopology::PointList:
+        return D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+    case RHIPrimitiveTopology::TriangleList:
+    default:
+        return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    }
+}
+
 void DX12Pipeline::CreateRootSignature(ID3D12Device* device)
 {
-    // Phase 2: Empty root signature (no descriptors, no push constants)
-    // Phase 3+: Global bindless root signature with push constants
-    D3D12_ROOT_SIGNATURE_DESC rootSigDesc{};
-    rootSigDesc.NumParameters = 0;
-    rootSigDesc.pParameters = nullptr;
-    rootSigDesc.NumStaticSamplers = 0;
-    rootSigDesc.pStaticSamplers = nullptr;
-    rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    D3D12_ROOT_PARAMETER1 rootParams[1]{};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rootParams[0].Constants.ShaderRegister = 0;
+    rootParams[0].Constants.RegisterSpace = 0;
+    rootParams[0].Constants.Num32BitValues = 2; // textureIndex, samplerIndex
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+    flags |= D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSigDesc{};
+    rootSigDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    rootSigDesc.Desc_1_1.NumParameters = 1;
+    rootSigDesc.Desc_1_1.pParameters = rootParams;
+    rootSigDesc.Desc_1_1.NumStaticSamplers = 0;
+    rootSigDesc.Desc_1_1.pStaticSamplers = nullptr;
+    rootSigDesc.Desc_1_1.Flags = flags;
 
     ComPtr<ID3DBlob> signature;
     ComPtr<ID3DBlob> error;
-    HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
-                                              &signature, &error);
+    HRESULT hr = D3D12SerializeVersionedRootSignature(&rootSigDesc, &signature, &error);
     if (FAILED(hr))
     {
         if (error)
@@ -37,9 +130,14 @@ void DX12Pipeline::CreateRootSignature(ID3D12Device* device)
         WEST_HR_CHECK(hr);
     }
 
-    WEST_HR_CHECK(device->CreateRootSignature(0, signature->GetBufferPointer(),
-                                               signature->GetBufferSize(),
-                                               IID_PPV_ARGS(&m_rootSignature)));
+    const HRESULT rootSignatureResult = device->CreateRootSignature(0, signature->GetBufferPointer(),
+                                                                    signature->GetBufferSize(),
+                                                                    IID_PPV_ARGS(&m_rootSignature));
+    if (FAILED(rootSignatureResult))
+    {
+        LogD3D12InfoQueueMessages(device, "root signature creation");
+        WEST_HR_CHECK(rootSignatureResult);
+    }
 }
 
 void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDesc& desc)
@@ -47,6 +145,7 @@ void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDes
     WEST_ASSERT(device != nullptr);
 
     CreateRootSignature(device);
+    m_primitiveTopology = ToD3D12PrimitiveTopology(desc.topology);
 
     // Build input layout from vertex attributes
     std::vector<D3D12_INPUT_ELEMENT_DESC> inputLayout;
@@ -101,10 +200,13 @@ void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDes
     // Depth stencil — disabled for Phase 2 triangle
     psoDesc.DepthStencilState.DepthEnable = desc.depthTest ? TRUE : FALSE;
     psoDesc.DepthStencilState.DepthWriteMask = desc.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    psoDesc.DepthStencilState.DepthFunc = ToD3D12CompareOp(desc.depthCompare);
     psoDesc.DepthStencilState.StencilEnable = FALSE;
+    psoDesc.DepthStencilState.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
+    psoDesc.DepthStencilState.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
 
     // Topology
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoDesc.PrimitiveTopologyType = ToD3D12PrimitiveTopologyType(desc.topology);
 
     // Render targets
     psoDesc.NumRenderTargets = static_cast<UINT>(desc.colorFormats.size());
@@ -123,7 +225,12 @@ void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDes
     psoDesc.SampleDesc.Count = 1;
     psoDesc.SampleDesc.Quality = 0;
 
-    WEST_HR_CHECK(device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pso)));
+    const HRESULT psoResult = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pso));
+    if (FAILED(psoResult))
+    {
+        LogD3D12InfoQueueMessages(device, "graphics PSO creation");
+        WEST_HR_CHECK(psoResult);
+    }
 
     // Simple hash from shader sizes
     m_psoHash = desc.vertexShader.size() ^ (desc.fragmentShader.size() << 16);

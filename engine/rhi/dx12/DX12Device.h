@@ -5,9 +5,11 @@
 #pragma once
 
 #include "rhi/dx12/DX12Helpers.h"
+#include "rhi/common/BindlessPool.h"
 #include "rhi/common/DeferredDeletionQueue.h"
 #include "rhi/interface/IRHIDevice.h"
 
+#include <mutex>
 #include <utility>
 
 namespace west::rhi
@@ -40,6 +42,7 @@ public:
 
     BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
+    BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
     void UnregisterBindlessResource(BindlessIndex index) override;
 
     void WaitIdle() override;
@@ -51,7 +54,7 @@ public:
     RHIDeviceCaps GetCapabilities() const override;
 
     // ── Internal Accessors (for other DX12 classes) ───────────────────
-    ID3D12Device8* GetD3DDevice() const
+    ID3D12Device* GetD3DDevice() const
     {
         return m_device.Get();
     }
@@ -62,6 +65,14 @@ public:
     DX12MemoryAllocator* GetMemoryAllocator()
     {
         return m_memoryAllocator.get();
+    }
+    ID3D12DescriptorHeap* GetResourceDescriptorHeap() const
+    {
+        return m_resourceDescriptorHeap.Get();
+    }
+    ID3D12DescriptorHeap* GetSamplerDescriptorHeap() const
+    {
+        return m_samplerDescriptorHeap.Get();
     }
 
     // ── Memory Management ─────────────────────────────────────────────
@@ -93,15 +104,27 @@ private:
     void CreateDevice();
     void QueryDeviceCaps();
     void CreateQueues();
+    void CreateBindlessHeaps();
+
+    D3D12_CPU_DESCRIPTOR_HANDLE GetResourceDescriptorCPU(BindlessIndex index) const;
+    D3D12_CPU_DESCRIPTOR_HANDLE GetSamplerDescriptorCPU(BindlessIndex index) const;
 
     ComPtr<IDXGIFactory7> m_factory;
     ComPtr<IDXGIAdapter4> m_adapter;
-    ComPtr<ID3D12Device8> m_device;
+    ComPtr<ID3D12Device> m_device;
     DXGI_ADAPTER_DESC3 m_adapterDesc{};
 
     std::unique_ptr<DX12Queue> m_graphicsQueue;
     std::unique_ptr<DX12MemoryAllocator> m_memoryAllocator;
-    // TODO(minsu): Phase 3 — Compute and Copy queues
+    // TODO(minsu): Phase 5 — Dedicated async compute/copy queues
+
+    static constexpr uint32_t kBindlessCapacity = 4096;
+    ComPtr<ID3D12DescriptorHeap> m_resourceDescriptorHeap;
+    ComPtr<ID3D12DescriptorHeap> m_samplerDescriptorHeap;
+    uint32_t m_resourceDescriptorSize = 0;
+    uint32_t m_samplerDescriptorSize = 0;
+    BindlessPool m_bindlessPool;
+    std::mutex m_bindlessMutex;
 
     RHIDeviceCaps m_caps{};
     std::string m_deviceName;

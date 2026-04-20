@@ -53,6 +53,7 @@ public:
     // ── Bindless ──────────────────────────────────────────────────────
     virtual BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHITexture* texture) = 0;
+    virtual BindlessIndex RegisterBindlessResource(IRHISampler* sampler) = 0;
     virtual void UnregisterBindlessResource(BindlessIndex index) = 0;
 
     // ── Utility ───────────────────────────────────────────────────────

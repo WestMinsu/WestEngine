@@ -26,6 +26,7 @@ bool VulkanMemoryAllocator::Initialize(VkInstance instance, VkPhysicalDevice phy
     allocatorInfo.physicalDevice = physicalDevice;
     allocatorInfo.device = device;
     allocatorInfo.instance = instance;
+    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
     WEST_VK_CHECK(vmaCreateAllocator(&allocatorInfo, &m_allocator));
 

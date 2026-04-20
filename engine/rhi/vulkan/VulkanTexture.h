@@ -1,20 +1,26 @@
 // =============================================================================
 // WestEngine - RHI Vulkan
-// Vulkan texture — minimal wrapper for SwapChain images (Phase 1)
+// Vulkan texture — VMA backed image or non-owning swapchain image
 // =============================================================================
 #pragma once
 
 #include "rhi/interface/IRHITexture.h"
 #include "rhi/vulkan/VulkanHelpers.h"
 
+#include <vk_mem_alloc.h>
+
 namespace west::rhi
 {
+
+class VulkanDevice;
 
 class VulkanTexture final : public IRHITexture
 {
 public:
     VulkanTexture() = default;
-    ~VulkanTexture() override = default;
+    ~VulkanTexture() override;
+
+    void Initialize(VulkanDevice* device, const RHITextureDesc& desc);
 
     /// Initialize from an existing VkImage (e.g. swapchain image).
     /// The texture does NOT own the image in this case.
@@ -39,12 +45,20 @@ public:
     {
         return m_imageView;
     }
+    void SetBindlessIndex(BindlessIndex index)
+    {
+        m_bindlessIndex = index;
+    }
 
 private:
-    VkImage m_image = VK_NULL_HANDLE; // Non-owning for swapchain
+    VmaAllocator m_vmaAllocator = VK_NULL_HANDLE;
+    VmaAllocation m_allocation = VK_NULL_HANDLE;
+    VkImage m_image = VK_NULL_HANDLE; // Owned by allocation, non-owning for swapchain
     VkImageView m_imageView = VK_NULL_HANDLE;
     RHITextureDesc m_desc{};
     BindlessIndex m_bindlessIndex = kInvalidBindlessIndex;
+    VulkanDevice* m_device = nullptr;
+    bool m_ownsImage = false;
 };
 
 } // namespace west::rhi

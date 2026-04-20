@@ -20,6 +20,8 @@ class IRHIFence;
 class IRHISemaphore;
 class IRHICommandList;
 class IRHIBuffer;
+class IRHITexture;
+class IRHISampler;
 class IRHIPipeline;
 } // namespace west::rhi
 
@@ -45,7 +47,8 @@ public:
 
 private:
     void InitializeRHI();
-    void InitializeTriangle();
+    void InitializeTexturedQuad();
+    void RunCommandRecordingBenchmark();
     void ShutdownRHI();
     void RenderFrame();
     void ResizeSwapChain(uint32 width, uint32 height);
@@ -54,6 +57,10 @@ private:
     std::unique_ptr<Win32Window> m_window;
     Timer m_timer;
     bool m_isRunning = false;
+    uint32 m_maxFrameCount = 0; // 0 = run until the window closes
+    bool m_enableValidation = false;
+    bool m_enableDX12GPUBasedValidation = false;
+    bool m_enableGPUCrashDiag = false;
 
     // ── RHI ───────────────────────────────────────────────────────────
     rhi::RHIBackend m_backend = rhi::RHIBackend::DX12;
@@ -73,9 +80,12 @@ private:
 
     uint64 m_frameCount = 0;
 
-    // ── Phase 2: Triangle Resources ───────────────────────────────────
-    std::unique_ptr<rhi::IRHIBuffer> m_triangleVB;
-    std::unique_ptr<rhi::IRHIPipeline> m_trianglePipeline;
+    // ── Phase 3: Bindless Textured Quad Resources ────────────────────
+    std::unique_ptr<rhi::IRHIBuffer> m_quadVB;
+    std::unique_ptr<rhi::IRHIBuffer> m_quadIB;
+    std::unique_ptr<rhi::IRHITexture> m_checkerTexture;
+    std::unique_ptr<rhi::IRHISampler> m_checkerSampler;
+    std::unique_ptr<rhi::IRHIPipeline> m_texturedQuadPipeline;
 };
 
 } // namespace west

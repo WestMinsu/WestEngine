@@ -4,8 +4,8 @@
 // =============================================================================
 #include "core/Memory/MemoryUtils.h"
 #include "core/Memory/StackAllocator.h"
+#include "TestAssert.h"
 
-#include <cassert>
 #include <cstdio>
 
 using namespace west;

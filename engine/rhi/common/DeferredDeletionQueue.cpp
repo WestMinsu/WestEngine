@@ -25,13 +25,10 @@ void DeferredDeletionQueue::Flush(uint64_t completedFenceValue)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    // Iterating backwards handles removal cleanly, but for deletion order we can 
-    // separate items to delete from ones to keep.
-    auto it = std::partition(m_queue.begin(), m_queue.end(),
-                             [completedFenceValue](const Entry& entry) {
-                                 // True if we should keep it (fence not yet reached)
-                                 return entry.fenceValue > completedFenceValue;
-                             });
+    auto it = std::stable_partition(m_queue.begin(), m_queue.end(),
+                                    [completedFenceValue](const Entry& entry) {
+                                        return entry.fenceValue > completedFenceValue;
+                                    });
 
     // The range [it, m_queue.end()) contains entries that should be deleted
     for (auto iter = it; iter != m_queue.end(); ++iter)

@@ -25,8 +25,9 @@ class IRHIPipeline;
 
 struct RHIDeviceConfig
 {
-    bool enableValidation = true;   // Validation Layer / Debug Layer
-    bool enableGPUCrashDiag = true; // DRED / VK_EXT_device_fault
+    bool enableValidation = true;              // Validation Layer / Debug Layer
+    bool enableDX12GPUBasedValidation = false; // D3D12 GPU-Based Validation; requires enableValidation
+    bool enableGPUCrashDiag = true;            // DRED / VK_EXT_device_fault
     uint32_t preferredGPUIndex = UINT32_MAX; // UINT32_MAX = auto-select high-performance GPU
     void* windowHandle = nullptr;   // HWND (Win32)
     uint32_t windowWidth = 1920;

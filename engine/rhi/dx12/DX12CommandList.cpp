@@ -14,9 +14,12 @@
 namespace west::rhi
 {
 
-void DX12CommandList::Initialize(ID3D12Device* device, RHIQueueType type)
+void DX12CommandList::Initialize(ID3D12Device* device, RHIQueueType type, ID3D12DescriptorHeap* resourceHeap,
+                                 ID3D12DescriptorHeap* samplerHeap)
 {
     m_queueType = type;
+    m_resourceDescriptorHeap = resourceHeap;
+    m_samplerDescriptorHeap = samplerHeap;
 
     D3D12_COMMAND_LIST_TYPE d3dType = D3D12_COMMAND_LIST_TYPE_DIRECT;
     switch (type)
@@ -52,6 +55,20 @@ void DX12CommandList::Begin()
     WEST_HR_CHECK(m_allocator->Reset());
     // Reset command list with the allocator
     WEST_HR_CHECK(m_cmdList->Reset(m_allocator.Get(), nullptr));
+
+    ID3D12DescriptorHeap* heaps[] = {m_resourceDescriptorHeap, m_samplerDescriptorHeap};
+    uint32_t heapCount = 0;
+    for (ID3D12DescriptorHeap* heap : heaps)
+    {
+        if (heap)
+        {
+            heaps[heapCount++] = heap;
+        }
+    }
+    if (heapCount > 0)
+    {
+        m_cmdList->SetDescriptorHeaps(heapCount, heaps);
+    }
 }
 
 void DX12CommandList::End()
@@ -194,12 +211,14 @@ void DX12CommandList::SetPipeline(IRHIPipeline* pipeline)
     WEST_ASSERT(dx12Pipeline != nullptr);
     m_cmdList->SetPipelineState(dx12Pipeline->GetPipelineState());
     m_cmdList->SetGraphicsRootSignature(dx12Pipeline->GetRootSignature());
-    m_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_cmdList->IASetPrimitiveTopology(dx12Pipeline->GetPrimitiveTopology());
 }
 
-void DX12CommandList::SetPushConstants(const void* /*data*/, uint32_t /*sizeBytes*/)
+void DX12CommandList::SetPushConstants(const void* data, uint32_t sizeBytes)
 {
-    // TODO(minsu): Phase 3 — SetGraphicsRoot32BitConstants
+    WEST_ASSERT(data != nullptr);
+    WEST_ASSERT(sizeBytes > 0 && (sizeBytes % sizeof(uint32_t)) == 0);
+    m_cmdList->SetGraphicsRoot32BitConstants(0, sizeBytes / sizeof(uint32_t), data, 0);
 }
 
 void DX12CommandList::SetVertexBuffer(uint32_t slot, IRHIBuffer* buffer, uint64_t offset)
@@ -261,9 +280,45 @@ void DX12CommandList::CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer
                                 dx12Src->GetD3DResource(), srcOffset, size);
 }
 
-void DX12CommandList::CopyBufferToTexture(IRHIBuffer* /*src*/, IRHITexture* /*dst*/, const RHICopyRegion& /*region*/)
+void DX12CommandList::CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, const RHICopyRegion& region)
 {
-    // TODO(minsu): Phase 2 — CopyTextureRegion
+    auto* dx12Src = static_cast<DX12Buffer*>(src);
+    auto* dx12Dst = static_cast<DX12Texture*>(dst);
+    WEST_ASSERT(dx12Src != nullptr && dx12Dst != nullptr);
+
+    const RHITextureDesc& desc = dx12Dst->GetDesc();
+    const uint32_t bytesPerPixel = GetFormatByteSize(desc.format);
+    WEST_ASSERT(bytesPerPixel > 0);
+
+    D3D12_TEXTURE_COPY_LOCATION srcLocation{};
+    srcLocation.pResource = dx12Src->GetD3DResource();
+    srcLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    srcLocation.PlacedFootprint.Offset = region.bufferOffset;
+    srcLocation.PlacedFootprint.Footprint.Format = static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
+    srcLocation.PlacedFootprint.Footprint.Width = region.texWidth;
+    srcLocation.PlacedFootprint.Footprint.Height = region.texHeight;
+    srcLocation.PlacedFootprint.Footprint.Depth = region.texDepth;
+
+    const uint32_t rowLength = region.bufferRowLength == 0 ? region.texWidth : region.bufferRowLength;
+    const uint32_t rowPitch = rowLength * bytesPerPixel;
+    srcLocation.PlacedFootprint.Footprint.RowPitch =
+        (rowPitch + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+
+    D3D12_TEXTURE_COPY_LOCATION dstLocation{};
+    dstLocation.pResource = dx12Dst->GetD3DResource();
+    dstLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dstLocation.SubresourceIndex = region.mipLevel + region.arrayLayer * desc.mipLevels;
+
+    D3D12_BOX srcBox{};
+    srcBox.left = 0;
+    srcBox.top = 0;
+    srcBox.front = 0;
+    srcBox.right = region.texWidth;
+    srcBox.bottom = region.texHeight;
+    srcBox.back = region.texDepth;
+
+    m_cmdList->CopyTextureRegion(&dstLocation, region.texOffsetX, region.texOffsetY, region.texOffsetZ,
+                                 &srcLocation, &srcBox);
 }
 
 void DX12CommandList::WriteTimestamp(IRHIBuffer* /*queryBuffer*/, uint32_t /*index*/)

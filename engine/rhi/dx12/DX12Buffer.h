@@ -34,6 +34,7 @@ public:
     // ── Internal ──────────────────────────────────────────────────────
     ID3D12Resource* GetD3DResource() const { return m_resource; }
     D3D12_GPU_VIRTUAL_ADDRESS GetGPUVirtualAddress() const;
+    void SetBindlessIndex(BindlessIndex index) { m_bindlessIndex = index; }
 
 private:
     D3D12MA::Allocation* m_allocation = nullptr;

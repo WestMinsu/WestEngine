@@ -31,6 +31,7 @@ public:
 
     // ── Internal ──────────────────────────────────────────────────────
     VkBuffer GetVkBuffer() const { return m_buffer; }
+    void SetBindlessIndex(BindlessIndex index) { m_bindlessIndex = index; }
 
 private:
     VmaAllocator m_vmaAllocator = VK_NULL_HANDLE;

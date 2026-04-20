@@ -3,8 +3,8 @@
 // PoolAllocator unit test
 // =============================================================================
 #include "core/Memory/PoolAllocator.h"
+#include "TestAssert.h"
 
-#include <cassert>
 #include <cstdio>
 #include <vector>
 

@@ -14,8 +14,10 @@
 #include "rhi/vulkan/VulkanMemoryAllocator.h"
 #include "rhi/vulkan/VulkanPipeline.h"
 #include "rhi/vulkan/VulkanQueue.h"
+#include "rhi/vulkan/VulkanSampler.h"
 #include "rhi/vulkan/VulkanSemaphore.h"
 #include "rhi/vulkan/VulkanSwapChain.h"
+#include "rhi/vulkan/VulkanTexture.h"
 
 // Win32 surface extension name — defined directly to avoid pulling in Windows headers.
 // VulkanSwapChain.cpp includes Win32Headers.h and vulkan_win32.h for actual surface creation.
@@ -23,7 +25,9 @@
 #define VK_KHR_WIN32_SURFACE_EXTENSION_NAME "VK_KHR_win32_surface"
 #endif
 
+#include <algorithm>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace west::rhi
@@ -64,6 +68,7 @@ VulkanDevice::~VulkanDevice()
     }
 
     m_deletionQueue.FlushAll();
+    DestroyBindlessDescriptors();
     m_memoryAllocator.reset();
     m_graphicsQueue.reset();
 
@@ -109,6 +114,7 @@ bool VulkanDevice::Initialize(const RHIDeviceConfig& config)
     SelectPhysicalDevice(config.preferredGPUIndex);
     CreateLogicalDevice(m_validationEnabled);
     QueryDeviceCaps();
+    WEST_CHECK(m_caps.maxBindlessResources > 0, "Vulkan bindless requires descriptor indexing support");
 
     // Create graphics queue wrapper
     VkQueue graphicsQueue;
@@ -129,6 +135,8 @@ bool VulkanDevice::Initialize(const RHIDeviceConfig& config)
         return false;
     }
     WEST_LOG_INFO(LogCategory::RHI, "  Resizable BAR: {}", m_memoryAllocator->SupportsReBAR() ? "Yes" : "No");
+
+    CreateBindlessDescriptors();
 
     return true;
 }
@@ -354,7 +362,9 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
 
-    // Check for VK_EXT_device_fault
+    bool descriptorBufferExtensionAvailable = false;
+
+    // Check optional/required device extensions
     {
         uint32_t extCount = 0;
         vkEnumerateDeviceExtensionProperties(m_physicalDevice, nullptr, &extCount, nullptr);
@@ -371,7 +381,52 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
                 break;
             }
         }
+
+        for (const auto& ext : availableExts)
+        {
+            if (std::strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME) == 0)
+            {
+                descriptorBufferExtensionAvailable = true;
+                break;
+            }
+        }
     }
+
+    WEST_CHECK(descriptorBufferExtensionAvailable, "VK_EXT_descriptor_buffer is required for Vulkan bindless");
+    deviceExtensions.push_back(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+
+    // Query support first. WestEngine Phase 3 is fallback-free: bindless is mandatory.
+    VkPhysicalDeviceVulkan13Features supported13{};
+    supported13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT supportedDescriptorBuffer{};
+    supportedDescriptorBuffer.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+
+    VkPhysicalDeviceVulkan12Features supported12{};
+    supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    supported12.pNext = &supported13;
+    supported13.pNext = &supportedDescriptorBuffer;
+
+    VkPhysicalDeviceFeatures2 supportedFeatures{};
+    supportedFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    supportedFeatures.pNext = &supported12;
+    vkGetPhysicalDeviceFeatures2(m_physicalDevice, &supportedFeatures);
+
+    WEST_CHECK(supported13.dynamicRendering == VK_TRUE, "Vulkan 1.3 dynamic rendering is required");
+    WEST_CHECK(supported13.synchronization2 == VK_TRUE, "Vulkan 1.3 synchronization2 is required");
+    WEST_CHECK(supported12.timelineSemaphore == VK_TRUE, "Vulkan timeline semaphore is required");
+    WEST_CHECK(supported12.bufferDeviceAddress == VK_TRUE, "Vulkan buffer device address is required");
+    WEST_CHECK(supported12.descriptorIndexing == VK_TRUE, "Vulkan descriptor indexing is required");
+    WEST_CHECK(supported12.descriptorBindingPartiallyBound == VK_TRUE,
+               "Vulkan partially-bound descriptors are required");
+    WEST_CHECK(supported12.runtimeDescriptorArray == VK_TRUE, "Vulkan runtime descriptor arrays are required");
+    WEST_CHECK(supported12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+               "Vulkan non-uniform sampled image indexing is required");
+    WEST_CHECK(supported12.shaderStorageBufferArrayNonUniformIndexing == VK_TRUE,
+               "Vulkan non-uniform storage buffer indexing is required");
+    WEST_CHECK(supportedDescriptorBuffer.descriptorBuffer == VK_TRUE, "VK_EXT_descriptor_buffer feature is required");
+    WEST_CHECK(supportedFeatures.features.samplerAnisotropy == VK_TRUE,
+               "Vulkan sampler anisotropy is required for Phase 3 samplers");
 
     // Vulkan 1.3 features — Timeline Semaphore, Dynamic Rendering, Synchronization2
     VkPhysicalDeviceVulkan13Features features13{};
@@ -383,18 +438,22 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.pNext = &features13;
     features12.timelineSemaphore = VK_TRUE;
+    features12.bufferDeviceAddress = VK_TRUE;
     features12.descriptorIndexing = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
-    features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
-    features12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
-    features12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
     features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
     features12.shaderStorageBufferArrayNonUniformIndexing = VK_TRUE;
+
+    VkPhysicalDeviceDescriptorBufferFeaturesEXT descriptorBufferFeatures{};
+    descriptorBufferFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
+    descriptorBufferFeatures.descriptorBuffer = VK_TRUE;
+    features13.pNext = &descriptorBufferFeatures;
 
     VkPhysicalDeviceFeatures2 features2{};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.pNext = &features12;
+    features2.features.samplerAnisotropy = VK_TRUE;
 
     // Device fault feature
     VkPhysicalDeviceFaultFeaturesEXT faultFeatures{};
@@ -402,7 +461,7 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
     {
         faultFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
         faultFeatures.deviceFault = VK_TRUE;
-        features13.pNext = &faultFeatures;
+        descriptorBufferFeatures.pNext = &faultFeatures;
     }
 
     VkDeviceCreateInfo deviceCreateInfo{};
@@ -465,15 +524,65 @@ void VulkanDevice::QueryDeviceCaps()
     vkGetPhysicalDeviceFeatures2(m_physicalDevice, &meshQuery);
     m_caps.supportsMeshShaders = (meshFeatures.meshShader == VK_TRUE);
 
-    // Bindless: descriptor indexing is enabled in 1.2 features
+    // Bindless: descriptor indexing supplies shader array limits, descriptor buffer supplies descriptor byte sizes.
     VkPhysicalDeviceDescriptorIndexingProperties indexingProps{};
     indexingProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES;
+
+    VkPhysicalDeviceDescriptorBufferPropertiesEXT descriptorBufferProps{};
+    descriptorBufferProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
+    indexingProps.pNext = &descriptorBufferProps;
 
     VkPhysicalDeviceProperties2 props2{};
     props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     props2.pNext = &indexingProps;
     vkGetPhysicalDeviceProperties2(m_physicalDevice, &props2);
-    m_caps.maxBindlessResources = indexingProps.maxDescriptorSetUpdateAfterBindSampledImages;
+
+    m_sampledImageDescriptorSize = descriptorBufferProps.sampledImageDescriptorSize;
+    m_samplerDescriptorSize = descriptorBufferProps.samplerDescriptorSize;
+    m_storageBufferDescriptorSize = descriptorBufferProps.storageBufferDescriptorSize;
+    m_maxSamplerAnisotropy = props.limits.maxSamplerAnisotropy;
+
+    uint32_t descriptorCapacity = std::min<uint32_t>(
+        kBindlessCapacity,
+        std::min(props.limits.maxDescriptorSetSampledImages,
+                 std::min(props.limits.maxDescriptorSetSamplers, props.limits.maxDescriptorSetStorageBuffers)));
+
+    auto descriptorLimitFromRange = [](VkDeviceSize range, size_t descriptorSize) -> uint32_t
+    {
+        if (descriptorSize == 0)
+        {
+            return 0;
+        }
+
+        const VkDeviceSize descriptorCount = range / descriptorSize;
+        if (descriptorCount > std::numeric_limits<uint32_t>::max())
+        {
+            return std::numeric_limits<uint32_t>::max();
+        }
+
+        return static_cast<uint32_t>(descriptorCount);
+    };
+
+    if (m_sampledImageDescriptorSize > 0)
+    {
+        descriptorCapacity = std::min<uint32_t>(
+            descriptorCapacity, descriptorLimitFromRange(descriptorBufferProps.maxResourceDescriptorBufferRange,
+                                                         m_sampledImageDescriptorSize));
+    }
+    if (m_storageBufferDescriptorSize > 0)
+    {
+        descriptorCapacity = std::min<uint32_t>(
+            descriptorCapacity, descriptorLimitFromRange(descriptorBufferProps.maxResourceDescriptorBufferRange,
+                                                         m_storageBufferDescriptorSize));
+    }
+    if (m_samplerDescriptorSize > 0)
+    {
+        descriptorCapacity = std::min<uint32_t>(
+            descriptorCapacity, descriptorLimitFromRange(descriptorBufferProps.maxSamplerDescriptorBufferRange,
+                                                         m_samplerDescriptorSize));
+    }
+
+    m_caps.maxBindlessResources = descriptorCapacity;
 
     // ReBAR: check for large host-visible device-local heap
     for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
@@ -484,6 +593,134 @@ void VulkanDevice::QueryDeviceCaps()
             m_caps.supportsResizableBar = true;
             break;
         }
+    }
+}
+
+void VulkanDevice::LoadDescriptorBufferFunctions()
+{
+    m_vkGetDescriptorSetLayoutSizeEXT = reinterpret_cast<PFN_vkGetDescriptorSetLayoutSizeEXT>(
+        vkGetDeviceProcAddr(m_device, "vkGetDescriptorSetLayoutSizeEXT"));
+    m_vkGetDescriptorSetLayoutBindingOffsetEXT = reinterpret_cast<PFN_vkGetDescriptorSetLayoutBindingOffsetEXT>(
+        vkGetDeviceProcAddr(m_device, "vkGetDescriptorSetLayoutBindingOffsetEXT"));
+    m_vkGetDescriptorEXT = reinterpret_cast<PFN_vkGetDescriptorEXT>(
+        vkGetDeviceProcAddr(m_device, "vkGetDescriptorEXT"));
+    m_vkCmdBindDescriptorBuffersEXT = reinterpret_cast<PFN_vkCmdBindDescriptorBuffersEXT>(
+        vkGetDeviceProcAddr(m_device, "vkCmdBindDescriptorBuffersEXT"));
+    m_vkCmdSetDescriptorBufferOffsetsEXT = reinterpret_cast<PFN_vkCmdSetDescriptorBufferOffsetsEXT>(
+        vkGetDeviceProcAddr(m_device, "vkCmdSetDescriptorBufferOffsetsEXT"));
+
+    WEST_CHECK(m_vkGetDescriptorSetLayoutSizeEXT != nullptr, "vkGetDescriptorSetLayoutSizeEXT is unavailable");
+    WEST_CHECK(m_vkGetDescriptorSetLayoutBindingOffsetEXT != nullptr,
+               "vkGetDescriptorSetLayoutBindingOffsetEXT is unavailable");
+    WEST_CHECK(m_vkGetDescriptorEXT != nullptr, "vkGetDescriptorEXT is unavailable");
+    WEST_CHECK(m_vkCmdBindDescriptorBuffersEXT != nullptr, "vkCmdBindDescriptorBuffersEXT is unavailable");
+    WEST_CHECK(m_vkCmdSetDescriptorBufferOffsetsEXT != nullptr,
+               "vkCmdSetDescriptorBufferOffsetsEXT is unavailable");
+}
+
+void VulkanDevice::CreateBindlessDescriptors()
+{
+    m_bindlessCapacity = std::min(kBindlessCapacity, m_caps.maxBindlessResources);
+    WEST_CHECK(m_bindlessCapacity > 0, "Vulkan bindless descriptor capacity is zero");
+    WEST_CHECK(m_memoryAllocator != nullptr, "Vulkan bindless descriptor buffer requires VMA");
+    WEST_CHECK(m_sampledImageDescriptorSize > 0, "Vulkan sampled image descriptor size is zero");
+    WEST_CHECK(m_samplerDescriptorSize > 0, "Vulkan sampler descriptor size is zero");
+    WEST_CHECK(m_storageBufferDescriptorSize > 0, "Vulkan storage buffer descriptor size is zero");
+
+    LoadDescriptorBufferFunctions();
+
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    bindings[0].descriptorCount = m_bindlessCapacity;
+    bindings[0].stageFlags = VK_SHADER_STAGE_ALL;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[1].descriptorCount = m_bindlessCapacity;
+    bindings[1].stageFlags = VK_SHADER_STAGE_ALL;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[2].descriptorCount = m_bindlessCapacity;
+    bindings[2].stageFlags = VK_SHADER_STAGE_ALL;
+
+    VkDescriptorBindingFlags bindingFlags[3] = {
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+    };
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{};
+    bindingFlagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    bindingFlagsInfo.bindingCount = 3;
+    bindingFlagsInfo.pBindingFlags = bindingFlags;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.pNext = &bindingFlagsInfo;
+    layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+    layoutInfo.bindingCount = 3;
+    layoutInfo.pBindings = bindings;
+
+    WEST_VK_CHECK(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_bindlessSetLayout));
+
+    m_vkGetDescriptorSetLayoutSizeEXT(m_device, m_bindlessSetLayout, &m_bindlessDescriptorBufferSize);
+    m_vkGetDescriptorSetLayoutBindingOffsetEXT(m_device, m_bindlessSetLayout, 0, &m_textureDescriptorOffset);
+    m_vkGetDescriptorSetLayoutBindingOffsetEXT(m_device, m_bindlessSetLayout, 1, &m_samplerDescriptorOffset);
+    m_vkGetDescriptorSetLayoutBindingOffsetEXT(m_device, m_bindlessSetLayout, 2, &m_bufferDescriptorOffset);
+    WEST_CHECK(m_bindlessDescriptorBufferSize > 0, "Vulkan descriptor buffer layout size is zero");
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = m_bindlessDescriptorBufferSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT |
+                       VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT |
+                       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                      VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+    VmaAllocationInfo allocationInfo{};
+    WEST_VK_CHECK(vmaCreateBuffer(m_memoryAllocator->GetAllocator(), &bufferInfo, &allocInfo,
+                                  &m_bindlessDescriptorBuffer, &m_bindlessDescriptorAllocation,
+                                  &allocationInfo));
+    m_bindlessDescriptorMapped = allocationInfo.pMappedData;
+    WEST_CHECK(m_bindlessDescriptorMapped != nullptr, "Failed to map Vulkan bindless descriptor buffer");
+    std::memset(m_bindlessDescriptorMapped, 0, static_cast<size_t>(m_bindlessDescriptorBufferSize));
+
+    VkBufferDeviceAddressInfo addressInfo{};
+    addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addressInfo.buffer = m_bindlessDescriptorBuffer;
+    m_bindlessDescriptorBufferAddress = vkGetBufferDeviceAddress(m_device, &addressInfo);
+    WEST_CHECK(m_bindlessDescriptorBufferAddress != 0, "Failed to get Vulkan descriptor buffer address");
+
+    m_bindlessPool.Initialize(m_bindlessCapacity);
+
+    WEST_LOG_INFO(LogCategory::RHI,
+                  "Vulkan bindless descriptor buffer created (capacity={}, size={} bytes).",
+                  m_bindlessCapacity, m_bindlessDescriptorBufferSize);
+}
+
+void VulkanDevice::DestroyBindlessDescriptors()
+{
+    if (m_bindlessDescriptorBuffer && m_memoryAllocator)
+    {
+        vmaDestroyBuffer(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorBuffer,
+                         m_bindlessDescriptorAllocation);
+        m_bindlessDescriptorBuffer = VK_NULL_HANDLE;
+        m_bindlessDescriptorAllocation = VK_NULL_HANDLE;
+        m_bindlessDescriptorMapped = nullptr;
+        m_bindlessDescriptorBufferAddress = 0;
+    }
+
+    if (m_bindlessSetLayout)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_bindlessSetLayout, nullptr);
+        m_bindlessSetLayout = VK_NULL_HANDLE;
     }
 }
 
@@ -506,7 +743,8 @@ std::unique_ptr<IRHISemaphore> VulkanDevice::CreateBinarySemaphore()
 std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(RHIQueueType type)
 {
     auto cmdList = std::make_unique<VulkanCommandList>();
-    cmdList->Initialize(m_device, m_graphicsQueueFamily, type);
+    cmdList->Initialize(m_device, m_graphicsQueueFamily, type, m_bindlessDescriptorBufferAddress,
+                        m_vkCmdBindDescriptorBuffersEXT, m_vkCmdSetDescriptorBufferOffsetsEXT);
     return cmdList;
 }
 
@@ -552,16 +790,16 @@ std::unique_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
 
 std::unique_ptr<IRHITexture> VulkanDevice::CreateTexture(const RHITextureDesc& desc)
 {
-    // TODO(minsu): Phase 2 — VMA texture allocation
-    WEST_LOG_WARNING(LogCategory::RHI, "VulkanDevice::CreateTexture — stub");
-    return nullptr;
+    auto texture = std::make_unique<VulkanTexture>();
+    texture->Initialize(this, desc);
+    return texture;
 }
 
 std::unique_ptr<IRHISampler> VulkanDevice::CreateSampler(const RHISamplerDesc& desc)
 {
-    // TODO(minsu): Phase 3 — Sampler creation
-    WEST_LOG_WARNING(LogCategory::RHI, "VulkanDevice::CreateSampler — stub");
-    return nullptr;
+    auto sampler = std::make_unique<VulkanSampler>();
+    sampler->Initialize(this, desc);
+    return sampler;
 }
 
 std::unique_ptr<IRHIPipeline> VulkanDevice::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc)
@@ -570,7 +808,7 @@ std::unique_ptr<IRHIPipeline> VulkanDevice::CreateGraphicsPipeline(const RHIGrap
     // Default to B8G8R8A8_UNORM if no color formats specified
     VkFormat swapChainFormat = VK_FORMAT_B8G8R8A8_UNORM;
     auto pipeline = std::make_unique<VulkanPipeline>();
-    pipeline->Initialize(m_device, desc, swapChainFormat);
+    pipeline->Initialize(m_device, desc, swapChainFormat, m_bindlessSetLayout);
     return pipeline;
 }
 
@@ -583,19 +821,144 @@ std::unique_ptr<IRHIPipeline> VulkanDevice::CreateComputePipeline(const RHICompu
 
 BindlessIndex VulkanDevice::RegisterBindlessResource(IRHIBuffer* buffer)
 {
-    // TODO(minsu): Phase 3 — Descriptor indexing registration
-    return kInvalidBindlessIndex;
+    WEST_ASSERT(buffer != nullptr);
+    WEST_ASSERT(m_bindlessDescriptorMapped != nullptr);
+    WEST_ASSERT(m_vkGetDescriptorEXT != nullptr);
+
+    auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+    std::lock_guard lock(m_bindlessMutex);
+
+    BindlessIndex index = m_bindlessPool.Allocate();
+    if (index == kInvalidBindlessIndex)
+    {
+        WEST_LOG_ERROR(LogCategory::RHI, "Vulkan bindless pool exhausted while registering buffer");
+        return kInvalidBindlessIndex;
+    }
+
+    VkBufferDeviceAddressInfo bufferAddressInfo{};
+    bufferAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    bufferAddressInfo.buffer = vkBuffer->GetVkBuffer();
+    const VkDeviceAddress bufferAddress = vkGetBufferDeviceAddress(m_device, &bufferAddressInfo);
+    WEST_CHECK(bufferAddress != 0, "Vulkan bindless buffer registration requires a device address");
+
+    VkDescriptorAddressInfoEXT addressInfo{};
+    addressInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT;
+    addressInfo.address = bufferAddress;
+    addressInfo.range = buffer->GetDesc().sizeBytes;
+    addressInfo.format = VK_FORMAT_UNDEFINED;
+
+    VkDescriptorGetInfoEXT descriptorInfo{};
+    descriptorInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
+    descriptorInfo.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorInfo.data.pStorageBuffer = &addressInfo;
+
+    const VkDeviceSize descriptorOffset = m_bufferDescriptorOffset + index * m_storageBufferDescriptorSize;
+    void* descriptorDst = static_cast<uint8_t*>(m_bindlessDescriptorMapped) + descriptorOffset;
+    m_vkGetDescriptorEXT(m_device, &descriptorInfo, m_storageBufferDescriptorSize, descriptorDst);
+    vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                       descriptorOffset, m_storageBufferDescriptorSize);
+
+    vkBuffer->SetBindlessIndex(index);
+    return index;
 }
 
 BindlessIndex VulkanDevice::RegisterBindlessResource(IRHITexture* texture)
 {
-    // TODO(minsu): Phase 3 — Descriptor indexing registration
-    return kInvalidBindlessIndex;
+    WEST_ASSERT(texture != nullptr);
+    WEST_ASSERT(m_bindlessDescriptorMapped != nullptr);
+    WEST_ASSERT(m_vkGetDescriptorEXT != nullptr);
+
+    auto* vkTexture = static_cast<VulkanTexture*>(texture);
+    std::lock_guard lock(m_bindlessMutex);
+
+    BindlessIndex index = m_bindlessPool.Allocate();
+    if (index == kInvalidBindlessIndex)
+    {
+        WEST_LOG_ERROR(LogCategory::RHI, "Vulkan bindless pool exhausted while registering texture");
+        return kInvalidBindlessIndex;
+    }
+
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageView = vkTexture->GetVkImageView();
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkDescriptorGetInfoEXT descriptorInfo{};
+    descriptorInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
+    descriptorInfo.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    descriptorInfo.data.pSampledImage = &imageInfo;
+
+    const VkDeviceSize descriptorOffset = m_textureDescriptorOffset + index * m_sampledImageDescriptorSize;
+    void* descriptorDst = static_cast<uint8_t*>(m_bindlessDescriptorMapped) + descriptorOffset;
+    m_vkGetDescriptorEXT(m_device, &descriptorInfo, m_sampledImageDescriptorSize, descriptorDst);
+    vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                       descriptorOffset, m_sampledImageDescriptorSize);
+
+    vkTexture->SetBindlessIndex(index);
+    return index;
+}
+
+BindlessIndex VulkanDevice::RegisterBindlessResource(IRHISampler* sampler)
+{
+    WEST_ASSERT(sampler != nullptr);
+    WEST_ASSERT(m_bindlessDescriptorMapped != nullptr);
+    WEST_ASSERT(m_vkGetDescriptorEXT != nullptr);
+
+    auto* vkSampler = static_cast<VulkanSampler*>(sampler);
+    std::lock_guard lock(m_bindlessMutex);
+
+    BindlessIndex index = m_bindlessPool.Allocate();
+    if (index == kInvalidBindlessIndex)
+    {
+        WEST_LOG_ERROR(LogCategory::RHI, "Vulkan bindless pool exhausted while registering sampler");
+        return kInvalidBindlessIndex;
+    }
+
+    VkSampler samplerHandle = vkSampler->GetVkSampler();
+
+    VkDescriptorGetInfoEXT descriptorInfo{};
+    descriptorInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT;
+    descriptorInfo.type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    descriptorInfo.data.pSampler = &samplerHandle;
+
+    const VkDeviceSize descriptorOffset = m_samplerDescriptorOffset + index * m_samplerDescriptorSize;
+    void* descriptorDst = static_cast<uint8_t*>(m_bindlessDescriptorMapped) + descriptorOffset;
+    m_vkGetDescriptorEXT(m_device, &descriptorInfo, m_samplerDescriptorSize, descriptorDst);
+    vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                       descriptorOffset, m_samplerDescriptorSize);
+
+    vkSampler->SetBindlessIndex(index);
+    return index;
 }
 
 void VulkanDevice::UnregisterBindlessResource(BindlessIndex index)
 {
-    // TODO(minsu): Phase 3 — Descriptor indexing unregistration
+    std::lock_guard lock(m_bindlessMutex);
+    if (!m_bindlessPool.Free(index))
+    {
+        WEST_LOG_WARNING(LogCategory::RHI, "Vulkan bindless unregister ignored for invalid index {}", index);
+        return;
+    }
+
+    if (m_bindlessDescriptorMapped)
+    {
+        const VkDeviceSize textureOffset = m_textureDescriptorOffset + index * m_sampledImageDescriptorSize;
+        const VkDeviceSize samplerOffset = m_samplerDescriptorOffset + index * m_samplerDescriptorSize;
+        const VkDeviceSize bufferOffset = m_bufferDescriptorOffset + index * m_storageBufferDescriptorSize;
+
+        std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + textureOffset, 0,
+                    m_sampledImageDescriptorSize);
+        std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + samplerOffset, 0,
+                    m_samplerDescriptorSize);
+        std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + bufferOffset, 0,
+                    m_storageBufferDescriptorSize);
+
+        vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                           textureOffset, m_sampledImageDescriptorSize);
+        vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                           samplerOffset, m_samplerDescriptorSize);
+        vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                           bufferOffset, m_storageBufferDescriptorSize);
+    }
 }
 
 } // namespace west::rhi

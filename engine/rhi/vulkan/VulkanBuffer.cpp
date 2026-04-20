@@ -74,6 +74,8 @@ void VulkanBuffer::Initialize(VulkanDevice* device, const RHIBufferDesc& desc)
     if (HasFlag(desc.usage, RHIBufferUsage::AccelStructure))
         usageFlags |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
 
+    usageFlags |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
     // Ensure transfer bits are set for staging operations
     if (desc.memoryType == RHIMemoryType::Upload)
         usageFlags |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;

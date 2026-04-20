@@ -4,8 +4,8 @@
 // =============================================================================
 #include "core/Memory/LinearAllocator.h"
 #include "core/Memory/MemoryUtils.h"
+#include "TestAssert.h"
 
-#include <cassert>
 #include <cstdio>
 #include <utility>
 

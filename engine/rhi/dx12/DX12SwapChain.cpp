@@ -196,14 +196,4 @@ void DX12SwapChain::Resize(uint32_t width, uint32_t height)
     WEST_LOG_INFO(LogCategory::RHI, "DX12 SwapChain resized: {}x{}", width, height);
 }
 
-// ── DX12Texture helper ────────────────────────────────────────────────────
-
-void DX12Texture::InitFromExisting(ID3D12Resource* resource, const RHITextureDesc& desc,
-                                   D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle)
-{
-    m_resource = resource;
-    m_desc = desc;
-    m_rtvHandle = rtvHandle;
-}
-
 } // namespace west::rhi

@@ -4,13 +4,18 @@
 // =============================================================================
 #pragma once
 
+#include "rhi/common/BindlessPool.h"
 #include "rhi/common/DeferredDeletionQueue.h"
 #include "rhi/interface/IRHIDevice.h"
 #include "rhi/vulkan/VulkanHelpers.h"
 
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
+
+struct VmaAllocation_T;
+using VmaAllocation = VmaAllocation_T*;
 
 namespace west::rhi
 {
@@ -41,6 +46,7 @@ public:
 
     BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
+    BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
     void UnregisterBindlessResource(BindlessIndex index) override;
 
     void WaitIdle() override;
@@ -67,6 +73,26 @@ public:
     VulkanMemoryAllocator* GetAllocator() const
     {
         return m_memoryAllocator.get();
+    }
+    VkDescriptorSetLayout GetBindlessSetLayout() const
+    {
+        return m_bindlessSetLayout;
+    }
+    VkDeviceAddress GetBindlessDescriptorBufferAddress() const
+    {
+        return m_bindlessDescriptorBufferAddress;
+    }
+    PFN_vkCmdBindDescriptorBuffersEXT GetCmdBindDescriptorBuffersEXT() const
+    {
+        return m_vkCmdBindDescriptorBuffersEXT;
+    }
+    PFN_vkCmdSetDescriptorBufferOffsetsEXT GetCmdSetDescriptorBufferOffsetsEXT() const
+    {
+        return m_vkCmdSetDescriptorBufferOffsetsEXT;
+    }
+    float GetMaxSamplerAnisotropy() const
+    {
+        return m_maxSamplerAnisotropy;
     }
 
     uint32_t GetGraphicsQueueFamily() const
@@ -103,6 +129,9 @@ private:
     void SelectPhysicalDevice(uint32_t preferredIndex);
     void CreateLogicalDevice(bool enableValidation);
     void QueryDeviceCaps();
+    void LoadDescriptorBufferFunctions();
+    void CreateBindlessDescriptors();
+    void DestroyBindlessDescriptors();
 
     VkInstance m_instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
@@ -113,6 +142,30 @@ private:
 
     std::unique_ptr<VulkanQueue> m_graphicsQueue;
     std::unique_ptr<VulkanMemoryAllocator> m_memoryAllocator;
+
+    static constexpr uint32_t kBindlessCapacity = 4096;
+    uint32_t m_bindlessCapacity = 0;
+    VkDescriptorSetLayout m_bindlessSetLayout = VK_NULL_HANDLE;
+    VkBuffer m_bindlessDescriptorBuffer = VK_NULL_HANDLE;
+    VmaAllocation m_bindlessDescriptorAllocation = VK_NULL_HANDLE;
+    void* m_bindlessDescriptorMapped = nullptr;
+    VkDeviceAddress m_bindlessDescriptorBufferAddress = 0;
+    VkDeviceSize m_bindlessDescriptorBufferSize = 0;
+    VkDeviceSize m_textureDescriptorOffset = 0;
+    VkDeviceSize m_samplerDescriptorOffset = 0;
+    VkDeviceSize m_bufferDescriptorOffset = 0;
+    size_t m_sampledImageDescriptorSize = 0;
+    size_t m_samplerDescriptorSize = 0;
+    size_t m_storageBufferDescriptorSize = 0;
+    float m_maxSamplerAnisotropy = 1.0f;
+    BindlessPool m_bindlessPool;
+    std::mutex m_bindlessMutex;
+
+    PFN_vkGetDescriptorSetLayoutSizeEXT m_vkGetDescriptorSetLayoutSizeEXT = nullptr;
+    PFN_vkGetDescriptorSetLayoutBindingOffsetEXT m_vkGetDescriptorSetLayoutBindingOffsetEXT = nullptr;
+    PFN_vkGetDescriptorEXT m_vkGetDescriptorEXT = nullptr;
+    PFN_vkCmdBindDescriptorBuffersEXT m_vkCmdBindDescriptorBuffersEXT = nullptr;
+    PFN_vkCmdSetDescriptorBufferOffsetsEXT m_vkCmdSetDescriptorBufferOffsetsEXT = nullptr;
 
     RHIDeviceCaps m_caps{};
     std::string m_deviceName;

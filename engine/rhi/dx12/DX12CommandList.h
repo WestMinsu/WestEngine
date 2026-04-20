@@ -17,7 +17,8 @@ public:
     ~DX12CommandList() override = default;
 
     /// Initialize command allocator + command list.
-    void Initialize(ID3D12Device* device, RHIQueueType type);
+    void Initialize(ID3D12Device* device, RHIQueueType type, ID3D12DescriptorHeap* resourceHeap,
+                    ID3D12DescriptorHeap* samplerHeap);
 
     // ── IRHICommandList interface ─────────────────────────────────────
     void Begin() override;
@@ -61,6 +62,8 @@ public:
 private:
     ComPtr<ID3D12CommandAllocator> m_allocator;
     ComPtr<ID3D12GraphicsCommandList6> m_cmdList;
+    ID3D12DescriptorHeap* m_resourceDescriptorHeap = nullptr;
+    ID3D12DescriptorHeap* m_samplerDescriptorHeap = nullptr;
     RHIQueueType m_queueType = RHIQueueType::Graphics;
 };
 

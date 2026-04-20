@@ -43,7 +43,7 @@ public:
 
 private:
     void CreateSurface(void* windowHandle);
-    void CreateSwapChain(uint32_t width, uint32_t height);
+    void CreateSwapChain(uint32_t width, uint32_t height, VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE);
     void CreateImageViews();
     void DestroySwapChainResources();
 
