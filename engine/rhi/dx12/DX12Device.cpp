@@ -20,11 +20,46 @@
 #include "rhi/interface/IRHISampler.h"
 #include "rhi/interface/IRHITexture.h"
 
+#include <d3d12sdklayers.h>
 #include <algorithm>
 #include <string>
+#include <vector>
 
 namespace west::rhi
 {
+
+namespace
+{
+
+void LogD3D12InfoQueueMessages(ID3D12Device* device, const char* context)
+{
+    ComPtr<ID3D12InfoQueue> infoQueue;
+    if (!device || FAILED(device->QueryInterface(IID_PPV_ARGS(&infoQueue))))
+    {
+        return;
+    }
+
+    const UINT64 messageCount = infoQueue->GetNumStoredMessages();
+    const UINT64 firstMessage = messageCount > 16 ? messageCount - 16 : 0;
+
+    for (UINT64 i = firstMessage; i < messageCount; ++i)
+    {
+        SIZE_T messageLength = 0;
+        if (FAILED(infoQueue->GetMessage(i, nullptr, &messageLength)) || messageLength == 0)
+        {
+            continue;
+        }
+
+        std::vector<uint8_t> messageStorage(messageLength);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageStorage.data());
+        if (SUCCEEDED(infoQueue->GetMessage(i, message, &messageLength)))
+        {
+            WEST_LOG_ERROR(LogCategory::RHI, "D3D12 {}: {}", context, message->pDescription);
+        }
+    }
+}
+
+} // namespace
 
 DX12Device::DX12Device() = default;
 
@@ -106,10 +141,11 @@ bool DX12Device::Initialize(const RHIDeviceConfig& config)
     CreateDevice();
     QueryDeviceCaps();
     WEST_CHECK(m_caps.maxBindlessResources > 0, "DX12 bindless requires ResourceBindingTier 2 or higher");
+    CreateGlobalRootSignature();
     CreateBindlessHeaps();
     CreateQueues();
 
-    // Phase 2: Initialize D3D12MA memory allocator
+    // Initialize D3D12MA memory allocator
     m_memoryAllocator = std::make_unique<DX12MemoryAllocator>();
     if (!m_memoryAllocator->Initialize(m_device.Get(), m_adapter.Get()))
     {
@@ -298,6 +334,54 @@ void DX12Device::QueryDeviceCaps()
     }
 }
 
+void DX12Device::CreateGlobalRootSignature()
+{
+    static_assert(kMaxPushConstantSizeBytes % sizeof(uint32_t) == 0);
+
+    D3D12_ROOT_PARAMETER1 rootParam{};
+    rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rootParam.Constants.ShaderRegister = 0;
+    rootParam.Constants.RegisterSpace = 0;
+    rootParam.Constants.Num32BitValues = kMaxPushConstantSizeBytes / sizeof(uint32_t);
+    rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSigDesc{};
+    rootSigDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    rootSigDesc.Desc_1_1.NumParameters = 1;
+    rootSigDesc.Desc_1_1.pParameters = &rootParam;
+    rootSigDesc.Desc_1_1.NumStaticSamplers = 0;
+    rootSigDesc.Desc_1_1.pStaticSamplers = nullptr;
+    rootSigDesc.Desc_1_1.Flags =
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+        D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
+        D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
+    const HRESULT serializeResult = D3D12SerializeVersionedRootSignature(&rootSigDesc, &signature, &error);
+    if (FAILED(serializeResult))
+    {
+        if (error)
+        {
+            WEST_LOG_ERROR(LogCategory::RHI, "Global root signature serialization failed: {}",
+                           static_cast<const char*>(error->GetBufferPointer()));
+        }
+        WEST_HR_CHECK(serializeResult);
+    }
+
+    const HRESULT rootSignatureResult = m_device->CreateRootSignature(
+        0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&m_globalRootSignature));
+    if (FAILED(rootSignatureResult))
+    {
+        LogD3D12InfoQueueMessages(m_device.Get(), "global root signature creation");
+        WEST_HR_CHECK(rootSignatureResult);
+    }
+
+    m_globalRootSignature->SetName(L"WestEngine Global Bindless Root Signature");
+    WEST_LOG_INFO(LogCategory::RHI, "DX12 global bindless root signature created (max push constants={} bytes).",
+                  kMaxPushConstantSizeBytes);
+}
+
 // ── Queue Creation ────────────────────────────────────────────────────────
 
 void DX12Device::CreateQueues()
@@ -440,15 +524,15 @@ std::unique_ptr<IRHISampler> DX12Device::CreateSampler(const RHISamplerDesc& des
 std::unique_ptr<IRHIPipeline> DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc)
 {
     auto pipeline = std::make_unique<DX12Pipeline>();
-    pipeline->Initialize(m_device.Get(), desc);
+    pipeline->Initialize(m_device.Get(), m_globalRootSignature.Get(), desc);
     return pipeline;
 }
 
 std::unique_ptr<IRHIPipeline> DX12Device::CreateComputePipeline(const RHIComputePipelineDesc& desc)
 {
-    // TODO(minsu): Phase 4 — Compute PSO
-    WEST_LOG_WARNING(LogCategory::RHI, "DX12Device::CreateComputePipeline — stub");
-    return nullptr;
+    auto pipeline = std::make_unique<DX12Pipeline>();
+    pipeline->Initialize(m_device.Get(), m_globalRootSignature.Get(), desc);
+    return pipeline;
 }
 
 BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer)
@@ -628,6 +712,7 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHISampler* sampler)
 
 void DX12Device::UnregisterBindlessResource(BindlessIndex index)
 {
+    std::lock_guard lock(m_bindlessMutex);
     if (!m_bindlessPool.Free(index))
     {
         WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless unregister ignored for invalid index {}", index);

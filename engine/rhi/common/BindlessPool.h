@@ -7,7 +7,6 @@
 #include "core/Types.h"
 #include "rhi/interface/RHIEnums.h"
 
-#include <mutex>
 #include <vector>
 
 namespace west::rhi
@@ -29,7 +28,6 @@ public:
     [[nodiscard]] uint32 GetAllocatedCount() const;
 
 private:
-    mutable std::mutex m_mutex;
     std::vector<BindlessIndex> m_freeList;
     std::vector<uint8> m_allocated;
     uint32 m_allocatedCount = 0;

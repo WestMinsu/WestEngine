@@ -66,6 +66,19 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 include(cmake/CompilerOptions.cmake)
 include(cmake/ThirdParty.cmake)
 
+# ── Shader Build Pipeline ─────────────────────────────────────────────────
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+include(cmake/ShaderCompile.cmake)
+
+west_add_slang_shader(
+    NAME TexturedQuad
+    SOURCE shaders/TexturedQuad.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
+west_finalize_slang_shaders()
+
 # ── Engine Targets ──────────────────────────────────────────────────────────
 add_subdirectory(engine)
 

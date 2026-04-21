@@ -12,6 +12,8 @@
 namespace west::rhi
 {
 
+inline constexpr uint32_t kMaxPushConstantSizeBytes = 128;
+
 // ── Forward Declarations ──────────────────────────────────────────────────
 
 class IRHIBuffer;
@@ -146,12 +148,16 @@ struct RHIGraphicsPipelineDesc
     RHIFormat depthFormat = RHIFormat::D32_FLOAT;
     std::span<const RHIBlendAttachment> blendAttachments;
 
+    uint32_t pushConstantSizeBytes = 0;
+    uint64_t psoHash = 0;
     const char* debugName = nullptr;
 };
 
 struct RHIComputePipelineDesc
 {
     std::span<const uint8_t> computeShader;
+    uint32_t pushConstantSizeBytes = 0;
+    uint64_t psoHash = 0;
     const char* debugName = nullptr;
 };
 

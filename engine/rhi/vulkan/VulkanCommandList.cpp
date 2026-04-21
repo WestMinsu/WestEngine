@@ -268,7 +268,8 @@ void VulkanCommandList::SetPipeline(IRHIPipeline* pipeline)
 {
     auto* vkPipeline = static_cast<VulkanPipeline*>(pipeline);
     WEST_ASSERT(vkPipeline != nullptr);
-    vkCmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->GetVkPipeline());
+    m_currentPipelineBindPoint = vkPipeline->GetVkBindPoint();
+    vkCmdBindPipeline(m_cmdBuffer, m_currentPipelineBindPoint, vkPipeline->GetVkPipeline());
     m_currentPipelineLayout = vkPipeline->GetVkPipelineLayout();
 
     if (m_bindlessDescriptorBufferAddress != 0 && m_vkCmdBindDescriptorBuffersEXT &&
@@ -284,7 +285,7 @@ void VulkanCommandList::SetPipeline(IRHIPipeline* pipeline)
 
         uint32_t bufferIndex = 0;
         VkDeviceSize descriptorOffset = 0;
-        m_vkCmdSetDescriptorBufferOffsetsEXT(m_cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_vkCmdSetDescriptorBufferOffsetsEXT(m_cmdBuffer, m_currentPipelineBindPoint,
                                              m_currentPipelineLayout, 0, 1,
                                              &bufferIndex, &descriptorOffset);
     }
@@ -294,6 +295,7 @@ void VulkanCommandList::SetPushConstants(const void* data, uint32_t sizeBytes)
 {
     WEST_ASSERT(data != nullptr);
     WEST_ASSERT(sizeBytes > 0);
+    WEST_ASSERT(sizeBytes <= kMaxPushConstantSizeBytes);
     WEST_ASSERT(m_currentPipelineLayout != VK_NULL_HANDLE);
     vkCmdPushConstants(m_cmdBuffer, m_currentPipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeBytes, data);
 }
@@ -334,9 +336,9 @@ void VulkanCommandList::DrawIndexedIndirectCount(IRHIBuffer* /*argsBuffer*/, uin
     // TODO(minsu): Phase 6
 }
 
-void VulkanCommandList::Dispatch(uint32_t /*groupCountX*/, uint32_t /*groupCountY*/, uint32_t /*groupCountZ*/)
+void VulkanCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
 {
-    // TODO(minsu): Phase 4
+    vkCmdDispatch(m_cmdBuffer, groupCountX, groupCountY, groupCountZ);
 }
 
 void VulkanCommandList::CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst,

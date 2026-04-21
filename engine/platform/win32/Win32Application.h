@@ -25,6 +25,11 @@ class IRHISampler;
 class IRHIPipeline;
 } // namespace west::rhi
 
+namespace west::shader
+{
+class PSOCache;
+} // namespace west::shader
+
 namespace west
 {
 
@@ -32,7 +37,7 @@ class Win32Application final : public IApplication
 {
 public:
     Win32Application() = default;
-    ~Win32Application() override = default;
+    ~Win32Application() override;
 
     // ── IApplication interface ─────────────────────────────────────────
     [[nodiscard]] bool Initialize() override;
@@ -85,7 +90,8 @@ private:
     std::unique_ptr<rhi::IRHIBuffer> m_quadIB;
     std::unique_ptr<rhi::IRHITexture> m_checkerTexture;
     std::unique_ptr<rhi::IRHISampler> m_checkerSampler;
-    std::unique_ptr<rhi::IRHIPipeline> m_texturedQuadPipeline;
+    rhi::IRHIPipeline* m_texturedQuadPipeline = nullptr;
+    std::unique_ptr<shader::PSOCache> m_psoCache;
 };
 
 } // namespace west

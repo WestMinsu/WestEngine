@@ -74,6 +74,10 @@ public:
     {
         return m_samplerDescriptorHeap.Get();
     }
+    ID3D12RootSignature* GetGlobalRootSignature() const
+    {
+        return m_globalRootSignature.Get();
+    }
 
     // ── Memory Management ─────────────────────────────────────────────
     void EnqueueDeferredDeletion(std::function<void()> deleter, uint64_t fenceValue) override
@@ -103,6 +107,7 @@ private:
     void SelectAdapter(uint32_t preferredIndex);
     void CreateDevice();
     void QueryDeviceCaps();
+    void CreateGlobalRootSignature();
     void CreateQueues();
     void CreateBindlessHeaps();
 
@@ -112,6 +117,7 @@ private:
     ComPtr<IDXGIFactory7> m_factory;
     ComPtr<IDXGIAdapter4> m_adapter;
     ComPtr<ID3D12Device> m_device;
+    ComPtr<ID3D12RootSignature> m_globalRootSignature;
     DXGI_ADAPTER_DESC3 m_adapterDesc{};
 
     std::unique_ptr<DX12Queue> m_graphicsQueue;

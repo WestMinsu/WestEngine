@@ -209,16 +209,32 @@ void DX12CommandList::SetPipeline(IRHIPipeline* pipeline)
 {
     auto* dx12Pipeline = static_cast<DX12Pipeline*>(pipeline);
     WEST_ASSERT(dx12Pipeline != nullptr);
+    m_currentPipelineType = dx12Pipeline->GetType();
     m_cmdList->SetPipelineState(dx12Pipeline->GetPipelineState());
-    m_cmdList->SetGraphicsRootSignature(dx12Pipeline->GetRootSignature());
-    m_cmdList->IASetPrimitiveTopology(dx12Pipeline->GetPrimitiveTopology());
+    if (m_currentPipelineType == RHIPipelineType::Compute)
+    {
+        m_cmdList->SetComputeRootSignature(dx12Pipeline->GetRootSignature());
+    }
+    else
+    {
+        m_cmdList->SetGraphicsRootSignature(dx12Pipeline->GetRootSignature());
+        m_cmdList->IASetPrimitiveTopology(dx12Pipeline->GetPrimitiveTopology());
+    }
 }
 
 void DX12CommandList::SetPushConstants(const void* data, uint32_t sizeBytes)
 {
     WEST_ASSERT(data != nullptr);
     WEST_ASSERT(sizeBytes > 0 && (sizeBytes % sizeof(uint32_t)) == 0);
-    m_cmdList->SetGraphicsRoot32BitConstants(0, sizeBytes / sizeof(uint32_t), data, 0);
+    WEST_ASSERT(sizeBytes <= kMaxPushConstantSizeBytes);
+    if (m_currentPipelineType == RHIPipelineType::Compute)
+    {
+        m_cmdList->SetComputeRoot32BitConstants(0, sizeBytes / sizeof(uint32_t), data, 0);
+    }
+    else
+    {
+        m_cmdList->SetGraphicsRoot32BitConstants(0, sizeBytes / sizeof(uint32_t), data, 0);
+    }
 }
 
 void DX12CommandList::SetVertexBuffer(uint32_t slot, IRHIBuffer* buffer, uint64_t offset)
@@ -264,9 +280,9 @@ void DX12CommandList::DrawIndexedIndirectCount(IRHIBuffer* /*argsBuffer*/, uint6
     // TODO(minsu): Phase 6 — ExecuteIndirect
 }
 
-void DX12CommandList::Dispatch(uint32_t /*groupCountX*/, uint32_t /*groupCountY*/, uint32_t /*groupCountZ*/)
+void DX12CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
 {
-    // TODO(minsu): Phase 4 — Dispatch
+    m_cmdList->Dispatch(groupCountX, groupCountY, groupCountZ);
 }
 
 void DX12CommandList::CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst,

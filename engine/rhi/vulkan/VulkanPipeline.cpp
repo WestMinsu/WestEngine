@@ -52,6 +52,26 @@ static VkCompareOp ToVkCompareOp(RHICompareOp op)
     }
 }
 
+static VkPipelineLayout CreatePipelineLayout(VkDevice device, VkDescriptorSetLayout bindlessSetLayout,
+                                             uint32_t pushConstantSizeBytes)
+{
+    VkPushConstantRange pushConstants{};
+    pushConstants.stageFlags = VK_SHADER_STAGE_ALL;
+    pushConstants.offset = 0;
+    pushConstants.size = pushConstantSizeBytes;
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = bindlessSetLayout != VK_NULL_HANDLE ? 1 : 0;
+    layoutInfo.pSetLayouts = bindlessSetLayout != VK_NULL_HANDLE ? &bindlessSetLayout : nullptr;
+    layoutInfo.pushConstantRangeCount = pushConstantSizeBytes > 0 ? 1 : 0;
+    layoutInfo.pPushConstantRanges = pushConstantSizeBytes > 0 ? &pushConstants : nullptr;
+
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    WEST_VK_CHECK(vkCreatePipelineLayout(device, &layoutInfo, nullptr, &layout));
+    return layout;
+}
+
 VulkanPipeline::~VulkanPipeline()
 {
     if (m_pipeline && m_device)
@@ -70,21 +90,11 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
                                 VkDescriptorSetLayout bindlessSetLayout)
 {
     WEST_ASSERT(device != VK_NULL_HANDLE);
+    WEST_ASSERT(desc.pushConstantSizeBytes <= kMaxPushConstantSizeBytes);
+    WEST_ASSERT((desc.pushConstantSizeBytes % sizeof(uint32_t)) == 0);
     m_device = device;
-
-    VkPushConstantRange pushConstants{};
-    pushConstants.stageFlags = VK_SHADER_STAGE_ALL;
-    pushConstants.offset = 0;
-    pushConstants.size = sizeof(uint32_t) * 2; // textureIndex, samplerIndex
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = bindlessSetLayout != VK_NULL_HANDLE ? 1 : 0;
-    layoutInfo.pSetLayouts = bindlessSetLayout != VK_NULL_HANDLE ? &bindlessSetLayout : nullptr;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushConstants;
-
-    WEST_VK_CHECK(vkCreatePipelineLayout(device, &layoutInfo, nullptr, &m_pipelineLayout));
+    m_type = RHIPipelineType::Graphics;
+    m_pipelineLayout = CreatePipelineLayout(device, bindlessSetLayout, desc.pushConstantSizeBytes);
 
     // ── Shader Modules ──
     VkShaderModuleCreateInfo vsModuleInfo{};
@@ -238,9 +248,46 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
     vkDestroyShaderModule(device, vsModule, nullptr);
     vkDestroyShaderModule(device, fsModule, nullptr);
 
-    m_psoHash = desc.vertexShader.size() ^ (desc.fragmentShader.size() << 16);
+    m_psoHash = desc.psoHash != 0 ? desc.psoHash : desc.vertexShader.size() ^ (desc.fragmentShader.size() << 16);
 
     WEST_LOG_INFO(LogCategory::RHI, "Vulkan Graphics Pipeline created: {}",
+                  desc.debugName ? desc.debugName : "unnamed");
+}
+
+void VulkanPipeline::Initialize(VkDevice device, const RHIComputePipelineDesc& desc,
+                                VkDescriptorSetLayout bindlessSetLayout)
+{
+    WEST_ASSERT(device != VK_NULL_HANDLE);
+    WEST_ASSERT(desc.pushConstantSizeBytes <= kMaxPushConstantSizeBytes);
+    WEST_ASSERT((desc.pushConstantSizeBytes % sizeof(uint32_t)) == 0);
+    m_device = device;
+    m_type = RHIPipelineType::Compute;
+    m_pipelineLayout = CreatePipelineLayout(device, bindlessSetLayout, desc.pushConstantSizeBytes);
+
+    VkShaderModuleCreateInfo csModuleInfo{};
+    csModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    csModuleInfo.codeSize = desc.computeShader.size();
+    csModuleInfo.pCode = reinterpret_cast<const uint32_t*>(desc.computeShader.data());
+
+    VkShaderModule csModule = VK_NULL_HANDLE;
+    WEST_VK_CHECK(vkCreateShaderModule(device, &csModuleInfo, nullptr, &csModule));
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+    pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.stage.module = csModule;
+    pipelineInfo.stage.pName = "main";
+    pipelineInfo.layout = m_pipelineLayout;
+
+    WEST_VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline));
+
+    vkDestroyShaderModule(device, csModule, nullptr);
+
+    m_psoHash = desc.psoHash != 0 ? desc.psoHash : desc.computeShader.size();
+
+    WEST_LOG_INFO(LogCategory::RHI, "Vulkan Compute Pipeline created: {}",
                   desc.debugName ? desc.debugName : "unnamed");
 }
 

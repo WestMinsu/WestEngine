@@ -9,6 +9,7 @@
 #include "rhi/interface/IRHIDevice.h"
 #include "rhi/vulkan/VulkanHelpers.h"
 
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -123,6 +124,14 @@ public:
     }
 
 private:
+    enum class BindlessDescriptorKind : uint8_t
+    {
+        None,
+        Texture,
+        Sampler,
+        Buffer
+    };
+
     void CreateInstance(bool enableValidation);
     [[nodiscard]] bool IsValidationLayerAvailable() const;
     void SetupDebugMessenger();
@@ -159,6 +168,7 @@ private:
     size_t m_storageBufferDescriptorSize = 0;
     float m_maxSamplerAnisotropy = 1.0f;
     BindlessPool m_bindlessPool;
+    std::vector<BindlessDescriptorKind> m_bindlessDescriptorKinds;
     std::mutex m_bindlessMutex;
 
     PFN_vkGetDescriptorSetLayoutSizeEXT m_vkGetDescriptorSetLayoutSizeEXT = nullptr;

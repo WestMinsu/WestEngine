@@ -29,6 +29,14 @@ function(west_add_rhi_common_test TEST_NAME TEST_SOURCE)
     add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
 endfunction()
 
+function(west_add_shader_test TEST_NAME TEST_SOURCE)
+    add_executable(${TEST_NAME} ${TEST_SOURCE})
+    target_link_libraries(${TEST_NAME} PRIVATE west_shader)
+    target_include_directories(${TEST_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    west_set_compiler_options(${TEST_NAME})
+    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+endfunction()
+
 # ── Allocator Tests ─────────────────────────────────────────────────────────
 west_add_test(LinearAllocator  core/test_linear_allocator.cpp)
 west_add_test(StackAllocator   core/test_stack_allocator.cpp)
@@ -37,3 +45,11 @@ west_add_test(PoolAllocator    core/test_pool_allocator.cpp)
 # ── RHI Common Tests ──────────────────────────────────────────────────────
 west_add_rhi_common_test(BindlessPool rhi/test_bindless_pool.cpp)
 west_add_rhi_common_test(DeferredDeletionQueue rhi/test_deferred_deletion_queue.cpp)
+
+# ── Shader Tests ──────────────────────────────────────────────────────────
+west_add_shader_test(PSOCacheHash shader/test_pso_cache_hash.cpp)
+
+add_test(
+    NAME ShaderMetadataExtractor
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/shader/test_extract_metadata.py ${CMAKE_SOURCE_DIR}
+)

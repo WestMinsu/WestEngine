@@ -13,7 +13,11 @@
     "directx-headers",
     "vulkan",
     "vulkan-memory-allocator",
-    "d3d12-memory-allocator"
+    "d3d12-memory-allocator",
+    {
+      "name": "shader-slang",
+      "host": true
+    }
   ],
   "builtin-baseline": "37dd44f23f51041f480440e99b45e5706f47765d"
 }

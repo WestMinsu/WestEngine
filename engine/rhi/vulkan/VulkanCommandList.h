@@ -5,6 +5,7 @@
 #pragma once
 
 #include "rhi/interface/IRHICommandList.h"
+#include "rhi/interface/IRHIPipeline.h"
 #include "rhi/vulkan/VulkanHelpers.h"
 
 namespace west::rhi
@@ -68,6 +69,7 @@ private:
     PFN_vkCmdBindDescriptorBuffersEXT m_vkCmdBindDescriptorBuffersEXT = nullptr;
     PFN_vkCmdSetDescriptorBufferOffsetsEXT m_vkCmdSetDescriptorBufferOffsetsEXT = nullptr;
     VkPipelineLayout m_currentPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineBindPoint m_currentPipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     RHIQueueType m_queueType = RHIQueueType::Graphics;
 };
 

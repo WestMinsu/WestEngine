@@ -6,6 +6,7 @@
 
 #include "rhi/dx12/DX12Helpers.h"
 #include "rhi/interface/IRHICommandList.h"
+#include "rhi/interface/IRHIPipeline.h"
 
 namespace west::rhi
 {
@@ -64,6 +65,7 @@ private:
     ComPtr<ID3D12GraphicsCommandList6> m_cmdList;
     ID3D12DescriptorHeap* m_resourceDescriptorHeap = nullptr;
     ID3D12DescriptorHeap* m_samplerDescriptorHeap = nullptr;
+    RHIPipelineType m_currentPipelineType = RHIPipelineType::Graphics;
     RHIQueueType m_queueType = RHIQueueType::Graphics;
 };
 

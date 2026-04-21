@@ -18,22 +18,23 @@ public:
     ~DX12Pipeline() override = default;
 
     /// Create a graphics PSO with the given desc.
-    void Initialize(ID3D12Device* device, const RHIGraphicsPipelineDesc& desc);
+    void Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature, const RHIGraphicsPipelineDesc& desc);
+    void Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature, const RHIComputePipelineDesc& desc);
 
     // ── IRHIPipeline interface ────────────────────────────────────────
+    RHIPipelineType GetType() const override { return m_type; }
     uint64_t GetPSOHash() const override { return m_psoHash; }
 
     // ── Internal ──────────────────────────────────────────────────────
     ID3D12PipelineState* GetPipelineState() const { return m_pso.Get(); }
-    ID3D12RootSignature* GetRootSignature() const { return m_rootSignature.Get(); }
+    ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
     D3D_PRIMITIVE_TOPOLOGY GetPrimitiveTopology() const { return m_primitiveTopology; }
 
 private:
-    void CreateRootSignature(ID3D12Device* device);
-
     ComPtr<ID3D12PipelineState> m_pso;
-    ComPtr<ID3D12RootSignature> m_rootSignature;
+    ID3D12RootSignature* m_rootSignature = nullptr;
     D3D_PRIMITIVE_TOPOLOGY m_primitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    RHIPipelineType m_type = RHIPipelineType::Graphics;
     uint64_t m_psoHash = 0;
 };
 

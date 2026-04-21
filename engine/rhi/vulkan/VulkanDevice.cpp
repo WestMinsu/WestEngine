@@ -699,6 +699,7 @@ void VulkanDevice::CreateBindlessDescriptors()
     WEST_CHECK(m_bindlessDescriptorBufferAddress != 0, "Failed to get Vulkan descriptor buffer address");
 
     m_bindlessPool.Initialize(m_bindlessCapacity);
+    m_bindlessDescriptorKinds.assign(m_bindlessCapacity, BindlessDescriptorKind::None);
 
     WEST_LOG_INFO(LogCategory::RHI,
                   "Vulkan bindless descriptor buffer created (capacity={}, size={} bytes).",
@@ -716,6 +717,7 @@ void VulkanDevice::DestroyBindlessDescriptors()
         m_bindlessDescriptorMapped = nullptr;
         m_bindlessDescriptorBufferAddress = 0;
     }
+    m_bindlessDescriptorKinds.clear();
 
     if (m_bindlessSetLayout)
     {
@@ -814,9 +816,9 @@ std::unique_ptr<IRHIPipeline> VulkanDevice::CreateGraphicsPipeline(const RHIGrap
 
 std::unique_ptr<IRHIPipeline> VulkanDevice::CreateComputePipeline(const RHIComputePipelineDesc& desc)
 {
-    // TODO(minsu): Phase 4 — Compute pipeline
-    WEST_LOG_WARNING(LogCategory::RHI, "VulkanDevice::CreateComputePipeline — stub");
-    return nullptr;
+    auto pipeline = std::make_unique<VulkanPipeline>();
+    pipeline->Initialize(m_device, desc, m_bindlessSetLayout);
+    return pipeline;
 }
 
 BindlessIndex VulkanDevice::RegisterBindlessResource(IRHIBuffer* buffer)
@@ -858,6 +860,8 @@ BindlessIndex VulkanDevice::RegisterBindlessResource(IRHIBuffer* buffer)
     vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
                        descriptorOffset, m_storageBufferDescriptorSize);
 
+    WEST_ASSERT(index < m_bindlessDescriptorKinds.size());
+    m_bindlessDescriptorKinds[index] = BindlessDescriptorKind::Buffer;
     vkBuffer->SetBindlessIndex(index);
     return index;
 }
@@ -893,6 +897,8 @@ BindlessIndex VulkanDevice::RegisterBindlessResource(IRHITexture* texture)
     vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
                        descriptorOffset, m_sampledImageDescriptorSize);
 
+    WEST_ASSERT(index < m_bindlessDescriptorKinds.size());
+    m_bindlessDescriptorKinds[index] = BindlessDescriptorKind::Texture;
     vkTexture->SetBindlessIndex(index);
     return index;
 }
@@ -926,6 +932,8 @@ BindlessIndex VulkanDevice::RegisterBindlessResource(IRHISampler* sampler)
     vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
                        descriptorOffset, m_samplerDescriptorSize);
 
+    WEST_ASSERT(index < m_bindlessDescriptorKinds.size());
+    m_bindlessDescriptorKinds[index] = BindlessDescriptorKind::Sampler;
     vkSampler->SetBindlessIndex(index);
     return index;
 }
@@ -933,32 +941,50 @@ BindlessIndex VulkanDevice::RegisterBindlessResource(IRHISampler* sampler)
 void VulkanDevice::UnregisterBindlessResource(BindlessIndex index)
 {
     std::lock_guard lock(m_bindlessMutex);
+    const BindlessDescriptorKind descriptorKind =
+        index < m_bindlessDescriptorKinds.size() ? m_bindlessDescriptorKinds[index] : BindlessDescriptorKind::None;
+
     if (!m_bindlessPool.Free(index))
     {
         WEST_LOG_WARNING(LogCategory::RHI, "Vulkan bindless unregister ignored for invalid index {}", index);
         return;
     }
 
-    if (m_bindlessDescriptorMapped)
+    if (index < m_bindlessDescriptorKinds.size())
     {
-        const VkDeviceSize textureOffset = m_textureDescriptorOffset + index * m_sampledImageDescriptorSize;
-        const VkDeviceSize samplerOffset = m_samplerDescriptorOffset + index * m_samplerDescriptorSize;
-        const VkDeviceSize bufferOffset = m_bufferDescriptorOffset + index * m_storageBufferDescriptorSize;
-
-        std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + textureOffset, 0,
-                    m_sampledImageDescriptorSize);
-        std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + samplerOffset, 0,
-                    m_samplerDescriptorSize);
-        std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + bufferOffset, 0,
-                    m_storageBufferDescriptorSize);
-
-        vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
-                           textureOffset, m_sampledImageDescriptorSize);
-        vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
-                           samplerOffset, m_samplerDescriptorSize);
-        vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
-                           bufferOffset, m_storageBufferDescriptorSize);
+        m_bindlessDescriptorKinds[index] = BindlessDescriptorKind::None;
     }
+
+    if (!m_bindlessDescriptorMapped || descriptorKind == BindlessDescriptorKind::None)
+    {
+        return;
+    }
+
+    VkDeviceSize descriptorOffset = 0;
+    VkDeviceSize descriptorSize = 0;
+    switch (descriptorKind)
+    {
+    case BindlessDescriptorKind::Texture:
+        descriptorOffset = m_textureDescriptorOffset + index * m_sampledImageDescriptorSize;
+        descriptorSize = m_sampledImageDescriptorSize;
+        break;
+    case BindlessDescriptorKind::Sampler:
+        descriptorOffset = m_samplerDescriptorOffset + index * m_samplerDescriptorSize;
+        descriptorSize = m_samplerDescriptorSize;
+        break;
+    case BindlessDescriptorKind::Buffer:
+        descriptorOffset = m_bufferDescriptorOffset + index * m_storageBufferDescriptorSize;
+        descriptorSize = m_storageBufferDescriptorSize;
+        break;
+    case BindlessDescriptorKind::None:
+    default:
+        return;
+    }
+
+    std::memset(static_cast<uint8_t*>(m_bindlessDescriptorMapped) + descriptorOffset, 0,
+                static_cast<size_t>(descriptorSize));
+    vmaFlushAllocation(m_memoryAllocator->GetAllocator(), m_bindlessDescriptorAllocation,
+                       descriptorOffset, descriptorSize);
 }
 
 } // namespace west::rhi

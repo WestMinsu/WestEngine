@@ -97,6 +97,43 @@ target_link_libraries(west_rhi_interface
         west_core
 )
 
+# ── west_shader ───────────────────────────────────────────────────────────
+# Runtime shader bytecode loading and in-memory PSO cache.
+add_library(west_shader STATIC
+    shader/ShaderCompiler.cpp
+    shader/PSOCache.cpp
+)
+
+file(GLOB_RECURSE WEST_SHADER_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/shader/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shader/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shader/*.inl"
+)
+
+target_sources(west_shader PRIVATE ${WEST_SHADER_HEADERS})
+
+file(TO_CMAKE_PATH "${WEST_SHADER_OUTPUT_DIR}" WEST_SHADER_OUTPUT_DIR_CPP)
+
+target_compile_definitions(west_shader
+    PUBLIC
+        WEST_SHADER_OUTPUT_DIR="${WEST_SHADER_OUTPUT_DIR_CPP}"
+)
+
+target_include_directories(west_shader
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}
+)
+
+target_link_libraries(west_shader
+    PUBLIC
+        west_rhi_interface
+)
+
+add_dependencies(west_shader west_shaders)
+
+west_set_compiler_options(west_shader)
+
 # ── west_rhi_common ─────────────────────────────────────────────────────────
 # Shared utilities across backends (format conversion, etc.)
 add_library(west_rhi_common STATIC
@@ -225,4 +262,9 @@ endif()
 if(TARGET west_engine_runtime AND TARGET west_rhi_vulkan)
     target_link_libraries(west_engine_runtime PRIVATE west_rhi_vulkan)
     target_compile_definitions(west_engine_runtime PRIVATE WEST_HAS_VULKAN_BACKEND)
+endif()
+
+if(TARGET west_engine_runtime)
+    target_link_libraries(west_engine_runtime PRIVATE west_shader)
+    add_dependencies(west_engine_runtime west_shader)
 endif()

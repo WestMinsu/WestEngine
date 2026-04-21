@@ -96,55 +96,16 @@ static D3D_PRIMITIVE_TOPOLOGY ToD3D12PrimitiveTopology(RHIPrimitiveTopology topo
     }
 }
 
-void DX12Pipeline::CreateRootSignature(ID3D12Device* device)
-{
-    D3D12_ROOT_PARAMETER1 rootParams[1]{};
-    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    rootParams[0].Constants.ShaderRegister = 0;
-    rootParams[0].Constants.RegisterSpace = 0;
-    rootParams[0].Constants.Num32BitValues = 2; // textureIndex, samplerIndex
-    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-    flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
-    flags |= D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
-
-    D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSigDesc{};
-    rootSigDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-    rootSigDesc.Desc_1_1.NumParameters = 1;
-    rootSigDesc.Desc_1_1.pParameters = rootParams;
-    rootSigDesc.Desc_1_1.NumStaticSamplers = 0;
-    rootSigDesc.Desc_1_1.pStaticSamplers = nullptr;
-    rootSigDesc.Desc_1_1.Flags = flags;
-
-    ComPtr<ID3DBlob> signature;
-    ComPtr<ID3DBlob> error;
-    HRESULT hr = D3D12SerializeVersionedRootSignature(&rootSigDesc, &signature, &error);
-    if (FAILED(hr))
-    {
-        if (error)
-        {
-            WEST_LOG_ERROR(LogCategory::RHI, "Root Signature serialization failed: {}",
-                           static_cast<const char*>(error->GetBufferPointer()));
-        }
-        WEST_HR_CHECK(hr);
-    }
-
-    const HRESULT rootSignatureResult = device->CreateRootSignature(0, signature->GetBufferPointer(),
-                                                                    signature->GetBufferSize(),
-                                                                    IID_PPV_ARGS(&m_rootSignature));
-    if (FAILED(rootSignatureResult))
-    {
-        LogD3D12InfoQueueMessages(device, "root signature creation");
-        WEST_HR_CHECK(rootSignatureResult);
-    }
-}
-
-void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDesc& desc)
+void DX12Pipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature,
+                              const RHIGraphicsPipelineDesc& desc)
 {
     WEST_ASSERT(device != nullptr);
+    WEST_ASSERT(rootSignature != nullptr);
+    WEST_ASSERT(desc.pushConstantSizeBytes <= kMaxPushConstantSizeBytes);
+    WEST_ASSERT((desc.pushConstantSizeBytes % sizeof(uint32_t)) == 0);
 
-    CreateRootSignature(device);
+    m_type = RHIPipelineType::Graphics;
+    m_rootSignature = rootSignature;
     m_primitiveTopology = ToD3D12PrimitiveTopology(desc.topology);
 
     // Build input layout from vertex attributes
@@ -164,7 +125,7 @@ void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDes
 
     // PSO description
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
-    psoDesc.pRootSignature = m_rootSignature.Get();
+    psoDesc.pRootSignature = m_rootSignature;
 
     // Shader bytecodes
     psoDesc.VS.pShaderBytecode = desc.vertexShader.data();
@@ -232,10 +193,38 @@ void DX12Pipeline::Initialize(ID3D12Device* device, const RHIGraphicsPipelineDes
         WEST_HR_CHECK(psoResult);
     }
 
-    // Simple hash from shader sizes
-    m_psoHash = desc.vertexShader.size() ^ (desc.fragmentShader.size() << 16);
+    m_psoHash = desc.psoHash != 0 ? desc.psoHash : desc.vertexShader.size() ^ (desc.fragmentShader.size() << 16);
 
     WEST_LOG_INFO(LogCategory::RHI, "DX12 Graphics Pipeline created: {}",
+                  desc.debugName ? desc.debugName : "unnamed");
+}
+
+void DX12Pipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature,
+                              const RHIComputePipelineDesc& desc)
+{
+    WEST_ASSERT(device != nullptr);
+    WEST_ASSERT(rootSignature != nullptr);
+    WEST_ASSERT(desc.pushConstantSizeBytes <= kMaxPushConstantSizeBytes);
+    WEST_ASSERT((desc.pushConstantSizeBytes % sizeof(uint32_t)) == 0);
+
+    m_type = RHIPipelineType::Compute;
+    m_rootSignature = rootSignature;
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc{};
+    psoDesc.pRootSignature = m_rootSignature;
+    psoDesc.CS.pShaderBytecode = desc.computeShader.data();
+    psoDesc.CS.BytecodeLength = desc.computeShader.size();
+
+    const HRESULT psoResult = device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&m_pso));
+    if (FAILED(psoResult))
+    {
+        LogD3D12InfoQueueMessages(device, "compute PSO creation");
+        WEST_HR_CHECK(psoResult);
+    }
+
+    m_psoHash = desc.psoHash != 0 ? desc.psoHash : desc.computeShader.size();
+
+    WEST_LOG_INFO(LogCategory::RHI, "DX12 Compute Pipeline created: {}",
                   desc.debugName ? desc.debugName : "unnamed");
 }
 

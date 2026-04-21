@@ -8,6 +8,7 @@
 #include "core/Logger.h"
 #include "core/Profiler.h"
 #include "core/Threading/TaskSystem.h"
+#include "generated/ShaderMetadata.h"
 #include "rhi/interface/IRHIBuffer.h"
 #include "rhi/interface/IRHICommandList.h"
 #include "rhi/interface/IRHIDevice.h"
@@ -20,7 +21,8 @@
 #include "rhi/interface/IRHITexture.h"
 #include "rhi/interface/RHIDescriptors.h"
 #include "rhi/interface/RHIFactory.h"
-#include "rhi/common/TexturedQuadShaderData.h"
+#include "shader/PSOCache.h"
+#include "shader/ShaderCompiler.h"
 
 #include <algorithm>
 #include <array>
@@ -59,6 +61,8 @@ const char* BuildConfigName()
 }
 
 } // namespace
+
+Win32Application::~Win32Application() = default;
 
 bool Win32Application::Initialize()
 {
@@ -225,6 +229,7 @@ void Win32Application::InitializeRHI()
 
     // Create frame fence (timeline semaphore)
     m_frameFence = m_rhiDevice->CreateFence(0);
+    m_psoCache = std::make_unique<shader::PSOCache>();
 
     // Create per-frame resources
     m_commandLists.resize(kMaxFramesInFlight);
@@ -256,7 +261,7 @@ void Win32Application::InitializeRHI()
 
     WEST_LOG_INFO(LogCategory::RHI, "Frame-in-Flight initialized (N={}).", kMaxFramesInFlight);
 
-    // Phase 3: Create bindless textured quad resources
+    // Create bindless textured quad resources
     InitializeTexturedQuad();
     RunCommandRecordingBenchmark();
 }
@@ -290,7 +295,7 @@ void Win32Application::Run()
     WEST_LOG_INFO(LogCategory::Core, "Main loop exited.");
 }
 
-// ── Textured Quad Setup (Phase 3) ─────────────────────────────────────────
+// ── Textured Quad Setup ─────────────────────────────────────────
 
 void Win32Application::InitializeTexturedQuad()
 {
@@ -469,19 +474,26 @@ void Win32Application::InitializeTexturedQuad()
     WEST_LOG_INFO(LogCategory::RHI, "Textured quad resources uploaded (VB={} bytes, IB={} bytes, texture={}x{}).",
                   vbSize, ibSize, kTextureWidth, kTextureHeight);
 
-    std::span<const uint8_t> vsData;
-    std::span<const uint8_t> psData;
+    std::vector<uint8_t> vsBytecode;
+    std::vector<uint8_t> psBytecode;
 
     if (m_backend == rhi::RHIBackend::DX12)
     {
-        vsData = std::span<const uint8_t>(rhi::kTexturedQuadVS_DXIL, sizeof(rhi::kTexturedQuadVS_DXIL));
-        psData = std::span<const uint8_t>(rhi::kTexturedQuadPS_DXIL, sizeof(rhi::kTexturedQuadPS_DXIL));
+        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.vs.dxil", vsBytecode),
+                   "Failed to load TexturedQuad DXIL vertex shader");
+        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.ps.dxil", psBytecode),
+                   "Failed to load TexturedQuad DXIL pixel shader");
     }
     else
     {
-        vsData = std::span<const uint8_t>(rhi::kTexturedQuadVS_SPIRV, sizeof(rhi::kTexturedQuadVS_SPIRV));
-        psData = std::span<const uint8_t>(rhi::kTexturedQuadPS_SPIRV, sizeof(rhi::kTexturedQuadPS_SPIRV));
+        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.vs.spv", vsBytecode),
+                   "Failed to load TexturedQuad SPIR-V vertex shader");
+        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.ps.spv", psBytecode),
+                   "Failed to load TexturedQuad SPIR-V fragment shader");
     }
+
+    const std::span<const uint8_t> vsData(vsBytecode.data(), vsBytecode.size());
+    const std::span<const uint8_t> psData(psBytecode.data(), psBytecode.size());
 
     rhi::RHIVertexAttribute vertexAttribs[] = {
         {"POSITION", rhi::RHIFormat::RGB32_FLOAT, 0},
@@ -501,10 +513,15 @@ void Win32Application::InitializeTexturedQuad()
     pipelineDesc.depthWrite = false;
     pipelineDesc.colorFormats = {&colorFormat, 1};
     pipelineDesc.depthFormat = rhi::RHIFormat::Unknown;
+    pipelineDesc.pushConstantSizeBytes = shader::metadata::TexturedQuad::PushConstantSizeBytes;
     pipelineDesc.debugName = "TexturedQuadPipeline";
 
-    m_texturedQuadPipeline = m_rhiDevice->CreateGraphicsPipeline(pipelineDesc);
+    WEST_CHECK(m_psoCache != nullptr, "PSO cache was not initialized");
+    m_texturedQuadPipeline = m_psoCache->GetOrCreateGraphicsPipeline(*m_rhiDevice, pipelineDesc);
     WEST_CHECK(m_texturedQuadPipeline != nullptr, "Failed to create textured quad pipeline");
+
+    auto* cachedPipeline = m_psoCache->GetOrCreateGraphicsPipeline(*m_rhiDevice, pipelineDesc);
+    WEST_CHECK(cachedPipeline == m_texturedQuadPipeline, "PSO cache returned a different pipeline for the same desc");
 
     WEST_LOG_INFO(LogCategory::RHI, "Bindless textured quad pipeline created (texture={}, sampler={}).",
                   textureIndex, samplerIndex);
@@ -674,15 +691,23 @@ void Win32Application::RenderFrame()
 
         struct PushConstants
         {
-            rhi::BindlessIndex textureIndex;
-            rhi::BindlessIndex samplerIndex;
+            struct DescriptorHandle
+            {
+                rhi::BindlessIndex index;
+                uint32 unused;
+            };
+
+            DescriptorHandle texture;
+            DescriptorHandle sampler;
         };
 
-        PushConstants pushConstants{};
-        pushConstants.textureIndex = m_checkerTexture->GetBindlessIndex();
-        pushConstants.samplerIndex = m_checkerSampler->GetBindlessIndex();
+        static_assert(sizeof(PushConstants) == shader::metadata::TexturedQuad::PushConstantSizeBytes);
 
-        cmdList->SetPipeline(m_texturedQuadPipeline.get());
+        PushConstants pushConstants{};
+        pushConstants.texture.index = m_checkerTexture->GetBindlessIndex();
+        pushConstants.sampler.index = m_checkerSampler->GetBindlessIndex();
+
+        cmdList->SetPipeline(m_texturedQuadPipeline);
         cmdList->SetPushConstants(&pushConstants, sizeof(pushConstants));
         cmdList->SetVertexBuffer(0, m_quadVB.get());
         cmdList->SetIndexBuffer(m_quadIB.get(), rhi::RHIFormat::R32_UINT);
@@ -788,7 +813,8 @@ void Win32Application::ShutdownRHI()
         m_rhiDevice->UnregisterBindlessResource(m_checkerTexture->GetBindlessIndex());
     }
 
-    m_texturedQuadPipeline.reset();
+    m_texturedQuadPipeline = nullptr;
+    m_psoCache.reset();
     m_checkerSampler.reset();
     m_checkerTexture.reset();
     m_quadIB.reset();

@@ -14,8 +14,6 @@ BindlessPool::BindlessPool(uint32 capacity)
 
 void BindlessPool::Initialize(uint32 capacity)
 {
-    std::lock_guard lock(m_mutex);
-
     m_freeList.clear();
     m_allocated.clear();
     m_allocated.resize(capacity, 0);
@@ -30,8 +28,6 @@ void BindlessPool::Initialize(uint32 capacity)
 
 BindlessIndex BindlessPool::Allocate()
 {
-    std::lock_guard lock(m_mutex);
-
     if (m_freeList.empty())
     {
         return kInvalidBindlessIndex;
@@ -47,8 +43,6 @@ BindlessIndex BindlessPool::Allocate()
 
 bool BindlessPool::Free(BindlessIndex index)
 {
-    std::lock_guard lock(m_mutex);
-
     if (index == kInvalidBindlessIndex || index >= m_allocated.size() || m_allocated[index] == 0)
     {
         return false;
@@ -62,8 +56,6 @@ bool BindlessPool::Free(BindlessIndex index)
 
 bool BindlessPool::IsAllocated(BindlessIndex index) const
 {
-    std::lock_guard lock(m_mutex);
-
     if (index == kInvalidBindlessIndex || index >= m_allocated.size())
     {
         return false;
@@ -74,13 +66,11 @@ bool BindlessPool::IsAllocated(BindlessIndex index) const
 
 uint32 BindlessPool::GetCapacity() const
 {
-    std::lock_guard lock(m_mutex);
     return static_cast<uint32>(m_allocated.size());
 }
 
 uint32 BindlessPool::GetAllocatedCount() const
 {
-    std::lock_guard lock(m_mutex);
     return m_allocatedCount;
 }
 
