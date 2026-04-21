@@ -9,10 +9,83 @@
 #include "rhi/vulkan/VulkanTexture.h"
 #include "rhi/common/FormatConversion.h"
 
+#include <tuple>
 #include <vector>
 
 namespace west::rhi
 {
+
+namespace
+{
+
+[[nodiscard]] bool IsDepthFormat(RHIFormat format)
+{
+    return format == RHIFormat::D16_UNORM ||
+           format == RHIFormat::D32_FLOAT ||
+           format == RHIFormat::D24_UNORM_S8_UINT ||
+           format == RHIFormat::D32_FLOAT_S8_UINT;
+}
+
+[[nodiscard]] std::tuple<VkImageLayout, VkAccessFlags2, VkPipelineStageFlags2> ConvertTextureState(
+    RHIResourceState state, RHIFormat format)
+{
+    if (HasFlag(state, RHIResourceState::RenderTarget))
+        return {VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT};
+    if (HasFlag(state, RHIResourceState::Present))
+        return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT};
+    if (HasFlag(state, RHIResourceState::ShaderResource))
+        return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
+    if (HasFlag(state, RHIResourceState::CopyDest))
+        return {VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COPY_BIT};
+    if (HasFlag(state, RHIResourceState::CopySource))
+        return {VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT,
+                VK_PIPELINE_STAGE_2_COPY_BIT};
+    if (HasFlag(state, RHIResourceState::DepthStencilWrite))
+        return {VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT};
+    if (HasFlag(state, RHIResourceState::DepthStencilRead))
+        return {VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT};
+    if (HasFlag(state, RHIResourceState::UnorderedAccess))
+        return {VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
+
+    return {IsDepthFormat(format) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
+}
+
+[[nodiscard]] std::pair<VkAccessFlags2, VkPipelineStageFlags2> ConvertBufferState(RHIResourceState state)
+{
+    if (HasFlag(state, RHIResourceState::VertexBuffer))
+        return {VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT};
+    if (HasFlag(state, RHIResourceState::IndexBuffer))
+        return {VK_ACCESS_2_INDEX_READ_BIT, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT};
+    if (HasFlag(state, RHIResourceState::ConstantBuffer))
+        return {VK_ACCESS_2_UNIFORM_READ_BIT, VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
+    if (HasFlag(state, RHIResourceState::ShaderResource))
+        return {VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
+    if (HasFlag(state, RHIResourceState::CopyDest))
+        return {VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT};
+    if (HasFlag(state, RHIResourceState::CopySource))
+        return {VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT};
+    if (HasFlag(state, RHIResourceState::UnorderedAccess))
+        return {VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
+    if (HasFlag(state, RHIResourceState::IndirectArgument))
+        return {VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT};
+
+    return {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
+}
+
+[[nodiscard]] VkImageAspectFlags GetTextureAspectMask(const VulkanTexture* texture)
+{
+    return IsDepthFormat(texture->GetDesc().format) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
+} // namespace
 
 VulkanCommandList::~VulkanCommandList()
 {
@@ -81,38 +154,8 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
     if (desc.type == RHIBarrierDesc::Type::Transition && desc.texture)
     {
         auto* vkTex = static_cast<VulkanTexture*>(desc.texture);
-
-        // Convert RHIResourceState to Vulkan layout + access + stage
-        auto convertState =
-            [](RHIResourceState state) -> std::tuple<VkImageLayout, VkAccessFlags2, VkPipelineStageFlags2>
-        {
-            if (HasFlag(state, RHIResourceState::RenderTarget))
-                return {VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT};
-            if (HasFlag(state, RHIResourceState::Present))
-                return {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT};
-            if (HasFlag(state, RHIResourceState::ShaderResource))
-                return {VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_SHADER_READ_BIT,
-                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT};
-            if (HasFlag(state, RHIResourceState::CopyDest))
-                return {VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                        VK_PIPELINE_STAGE_2_COPY_BIT};
-            if (HasFlag(state, RHIResourceState::CopySource))
-                return {VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT,
-                        VK_PIPELINE_STAGE_2_COPY_BIT};
-            if (HasFlag(state, RHIResourceState::DepthStencilWrite))
-                return {VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT};
-            if (HasFlag(state, RHIResourceState::UnorderedAccess))
-                return {VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT,
-                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
-
-            // Undefined / Common
-            return {VK_IMAGE_LAYOUT_UNDEFINED, VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
-        };
-
-        auto [oldLayout, srcAccess, srcStage] = convertState(desc.stateBefore);
-        auto [newLayout, dstAccess, dstStage] = convertState(desc.stateAfter);
+        auto [oldLayout, srcAccess, srcStage] = ConvertTextureState(desc.stateBefore, vkTex->GetDesc().format);
+        auto [newLayout, dstAccess, dstStage] = ConvertTextureState(desc.stateAfter, vkTex->GetDesc().format);
 
         VkImageMemoryBarrier2 imageBarrier{};
         imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
@@ -125,7 +168,8 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
         imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         imageBarrier.image = vkTex->GetVkImage();
-        imageBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        imageBarrier.subresourceRange = {GetTextureAspectMask(vkTex), 0, vkTex->GetDesc().mipLevels,
+                                         0, vkTex->GetDesc().arrayLayers};
 
         VkDependencyInfo depInfo{};
         depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
@@ -134,29 +178,11 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
 
         vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
     }
-    // TODO(minsu): Buffer barriers, aliasing barriers
-    if (desc.type == RHIBarrierDesc::Type::Transition && desc.buffer)
+    else if (desc.type == RHIBarrierDesc::Type::Transition && desc.buffer)
     {
         auto* vkBuf = static_cast<VulkanBuffer*>(desc.buffer);
-
-        auto convertBufferState =
-            [](RHIResourceState state) -> std::pair<VkAccessFlags2, VkPipelineStageFlags2>
-        {
-            if (HasFlag(state, RHIResourceState::VertexBuffer))
-                return {VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT, VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT};
-            if (HasFlag(state, RHIResourceState::IndexBuffer))
-                return {VK_ACCESS_2_INDEX_READ_BIT, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT};
-            if (HasFlag(state, RHIResourceState::CopyDest))
-                return {VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT};
-            if (HasFlag(state, RHIResourceState::CopySource))
-                return {VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT};
-            if (HasFlag(state, RHIResourceState::UnorderedAccess))
-                return {VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT};
-            return {VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT};
-        };
-
-        auto [srcAccess, srcStage] = convertBufferState(desc.stateBefore);
-        auto [dstAccess, dstStage] = convertBufferState(desc.stateAfter);
+        auto [srcAccess, srcStage] = ConvertBufferState(desc.stateBefore);
+        auto [dstAccess, dstStage] = ConvertBufferState(desc.stateAfter);
 
         VkBufferMemoryBarrier2 bufBarrier{};
         bufBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
@@ -174,6 +200,38 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
         depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         depInfo.bufferMemoryBarrierCount = 1;
         depInfo.pBufferMemoryBarriers = &bufBarrier;
+
+        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
+    }
+    else if (desc.type == RHIBarrierDesc::Type::Aliasing)
+    {
+        VkMemoryBarrier2 memoryBarrier{};
+        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+
+        VkDependencyInfo depInfo{};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        depInfo.memoryBarrierCount = 1;
+        depInfo.pMemoryBarriers = &memoryBarrier;
+
+        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
+    }
+    else if (desc.type == RHIBarrierDesc::Type::UAV)
+    {
+        VkMemoryBarrier2 memoryBarrier{};
+        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+
+        VkDependencyInfo depInfo{};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        depInfo.memoryBarrierCount = 1;
+        depInfo.pMemoryBarriers = &memoryBarrier;
 
         vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
     }

@@ -36,6 +36,8 @@ public:
     // ── IRHIDevice interface ──────────────────────────────────────────
     std::unique_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) override;
     std::unique_ptr<IRHITexture> CreateTexture(const RHITextureDesc& desc) override;
+    std::unique_ptr<IRHIBuffer> CreateTransientBuffer(const RHIBufferDesc& desc, uint32_t aliasSlot) override;
+    std::unique_ptr<IRHITexture> CreateTransientTexture(const RHITextureDesc& desc, uint32_t aliasSlot) override;
     std::unique_ptr<IRHISampler> CreateSampler(const RHISamplerDesc& desc) override;
     std::unique_ptr<IRHIPipeline> CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
     std::unique_ptr<IRHIPipeline> CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
@@ -150,6 +152,8 @@ private:
     uint32_t m_graphicsQueueFamily = UINT32_MAX;
 
     std::unique_ptr<VulkanQueue> m_graphicsQueue;
+    std::unique_ptr<VulkanQueue> m_computeQueue;
+    std::unique_ptr<VulkanQueue> m_copyQueue;
     std::unique_ptr<VulkanMemoryAllocator> m_memoryAllocator;
 
     static constexpr uint32_t kBindlessCapacity = 4096;

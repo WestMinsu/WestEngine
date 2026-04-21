@@ -31,6 +31,8 @@ public:
     // ── Resource Creation ─────────────────────────────────────────────
     virtual std::unique_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) = 0;
     virtual std::unique_ptr<IRHITexture> CreateTexture(const RHITextureDesc& desc) = 0;
+    virtual std::unique_ptr<IRHIBuffer> CreateTransientBuffer(const RHIBufferDesc& desc, uint32_t aliasSlot) = 0;
+    virtual std::unique_ptr<IRHITexture> CreateTransientTexture(const RHITextureDesc& desc, uint32_t aliasSlot) = 0;
     virtual std::unique_ptr<IRHISampler> CreateSampler(const RHISamplerDesc& desc) = 0;
 
     // ── Pipeline ──────────────────────────────────────────────────────

@@ -93,6 +93,17 @@ void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
         m_resource->SetName(wideName);
     }
 
+    if (HasFlag(desc.usage, RHITextureUsage::RenderTarget))
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
+        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtvHeapDesc.NumDescriptors = 1;
+        rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        WEST_HR_CHECK(device->GetD3DDevice()->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_rtvHeap)));
+        m_rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        device->GetD3DDevice()->CreateRenderTargetView(m_resource, nullptr, m_rtvHandle);
+    }
+
     WEST_LOG_VERBOSE(LogCategory::RHI, "DX12 Texture created: {} ({}x{})",
                      desc.debugName ? desc.debugName : "unnamed", desc.width, desc.height);
 }

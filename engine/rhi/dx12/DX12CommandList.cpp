@@ -117,7 +117,7 @@ void DX12CommandList::ResourceBarrier(const RHIBarrierDesc& desc)
             if (HasFlag(state, RHIResourceState::Present))
                 d3dState |= D3D12_RESOURCE_STATE_PRESENT;
             if (HasFlag(state, RHIResourceState::ShaderResource))
-                d3dState |= D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                d3dState |= D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
             if (HasFlag(state, RHIResourceState::UnorderedAccess))
                 d3dState |= D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
             if (HasFlag(state, RHIResourceState::DepthStencilWrite))
@@ -148,7 +148,33 @@ void DX12CommandList::ResourceBarrier(const RHIBarrierDesc& desc)
 
         m_cmdList->ResourceBarrier(1, &barrier);
     }
-    // TODO(minsu): Phase 5 — Aliasing and UAV barriers
+    else if (desc.type == RHIBarrierDesc::Type::Aliasing)
+    {
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+        barrier.Aliasing.pResourceBefore =
+            desc.aliasBefore ? static_cast<DX12Texture*>(desc.aliasBefore)->GetD3DResource() : nullptr;
+        barrier.Aliasing.pResourceAfter =
+            desc.aliasAfter ? static_cast<DX12Texture*>(desc.aliasAfter)->GetD3DResource() : nullptr;
+        m_cmdList->ResourceBarrier(1, &barrier);
+    }
+    else if (desc.type == RHIBarrierDesc::Type::UAV)
+    {
+        ID3D12Resource* resource = nullptr;
+        if (desc.texture)
+        {
+            resource = static_cast<DX12Texture*>(desc.texture)->GetD3DResource();
+        }
+        else if (desc.buffer)
+        {
+            resource = static_cast<DX12Buffer*>(desc.buffer)->GetD3DResource();
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = resource;
+        m_cmdList->ResourceBarrier(1, &barrier);
+    }
 }
 
 // ── Viewport & Scissor ────────────────────────────────────────────────────

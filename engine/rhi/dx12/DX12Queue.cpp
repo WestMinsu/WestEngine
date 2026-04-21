@@ -7,6 +7,8 @@
 #include "rhi/dx12/DX12CommandList.h"
 #include "rhi/dx12/DX12Fence.h"
 
+#include <vector>
+
 namespace west::rhi
 {
 
@@ -45,23 +47,39 @@ void DX12Queue::Initialize(ID3D12Device* device, RHIQueueType type)
 
 void DX12Queue::Submit(const RHISubmitInfo& info)
 {
-    WEST_ASSERT(info.commandList != nullptr);
+    WEST_ASSERT(!info.commandLists.empty());
 
-    // Get the underlying ID3D12CommandList from our wrapper
-    // DX12CommandList stores its ID3D12GraphicsCommandList which inherits from ID3D12CommandList
-    // We use the GetD3DCommandList() accessor
-    auto* dx12CmdList = static_cast<class DX12CommandList*>(info.commandList);
-
-    // Execute command list — we rely on DX12CommandList exposing GetD3DCommandList()
-    // Forward declaration is sufficient here; full include is in the .cpp
-    ID3D12CommandList* cmdLists[] = {reinterpret_cast<ID3D12CommandList*>(dx12CmdList->GetD3DCommandList())};
-    m_queue->ExecuteCommandLists(1, cmdLists);
-
-    // Signal fence if provided
-    if (info.signalFence)
+    for (const RHITimelineWaitDesc& waitDesc : info.timelineWaits)
     {
-        auto* dx12Fence = static_cast<DX12Fence*>(info.signalFence);
-        WEST_HR_CHECK(m_queue->Signal(dx12Fence->GetD3DFence(), info.signalValue));
+        if (!waitDesc.fence)
+        {
+            continue;
+        }
+
+        auto* dx12Fence = static_cast<DX12Fence*>(waitDesc.fence);
+        WEST_HR_CHECK(m_queue->Wait(dx12Fence->GetD3DFence(), waitDesc.value));
+    }
+
+    std::vector<ID3D12CommandList*> commandLists;
+    commandLists.reserve(info.commandLists.size());
+    for (IRHICommandList* commandList : info.commandLists)
+    {
+        WEST_ASSERT(commandList != nullptr);
+        auto* dx12CmdList = static_cast<DX12CommandList*>(commandList);
+        commandLists.push_back(reinterpret_cast<ID3D12CommandList*>(dx12CmdList->GetD3DCommandList()));
+    }
+
+    m_queue->ExecuteCommandLists(static_cast<UINT>(commandLists.size()), commandLists.data());
+
+    for (const RHITimelineSignalDesc& signalDesc : info.timelineSignals)
+    {
+        if (!signalDesc.fence)
+        {
+            continue;
+        }
+
+        auto* dx12Fence = static_cast<DX12Fence*>(signalDesc.fence);
+        WEST_HR_CHECK(m_queue->Signal(dx12Fence->GetD3DFence(), signalDesc.value));
     }
 }
 

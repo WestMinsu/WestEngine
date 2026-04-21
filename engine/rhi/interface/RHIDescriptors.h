@@ -230,11 +230,23 @@ struct RHICopyRegion
 
 // ── Submit Info ───────────────────────────────────────────────────────────
 
+struct RHITimelineWaitDesc
+{
+    IRHIFence* fence = nullptr;
+    uint64_t value = 0;
+};
+
+struct RHITimelineSignalDesc
+{
+    IRHIFence* fence = nullptr;
+    uint64_t value = 0;
+};
+
 struct RHISubmitInfo
 {
-    IRHICommandList* commandList = nullptr;
-    IRHIFence* signalFence = nullptr;         // Signal on completion
-    uint64_t signalValue = 0;                 // Timeline Semaphore value
+    std::span<IRHICommandList* const> commandLists;
+    std::span<const RHITimelineWaitDesc> timelineWaits;
+    std::span<const RHITimelineSignalDesc> timelineSignals;
     IRHISemaphore* waitSemaphore = nullptr;   // Binary (Swapchain Acquire)
     IRHISemaphore* signalSemaphore = nullptr; // Binary (Present)
 };

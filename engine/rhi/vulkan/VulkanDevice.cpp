@@ -71,6 +71,8 @@ VulkanDevice::~VulkanDevice()
     DestroyBindlessDescriptors();
     m_memoryAllocator.reset();
     m_graphicsQueue.reset();
+    m_computeQueue.reset();
+    m_copyQueue.reset();
 
     if (m_device)
     {
@@ -121,6 +123,10 @@ bool VulkanDevice::Initialize(const RHIDeviceConfig& config)
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &graphicsQueue);
     m_graphicsQueue = std::make_unique<VulkanQueue>();
     m_graphicsQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, RHIQueueType::Graphics);
+    m_computeQueue = std::make_unique<VulkanQueue>();
+    m_computeQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, RHIQueueType::Compute);
+    m_copyQueue = std::make_unique<VulkanQueue>();
+    m_copyQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, RHIQueueType::Copy);
 
     WEST_LOG_INFO(LogCategory::RHI, "Vulkan Device initialized: {}", m_deviceName);
     WEST_LOG_INFO(LogCategory::RHI, "  VRAM: {} MB", m_caps.dedicatedVideoMemory / (1024 * 1024));
@@ -402,16 +408,21 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
     VkPhysicalDeviceDescriptorBufferFeaturesEXT supportedDescriptorBuffer{};
     supportedDescriptorBuffer.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT;
 
+    VkPhysicalDeviceVulkan11Features supported11{};
+    supported11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+
     VkPhysicalDeviceVulkan12Features supported12{};
     supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    supported11.pNext = &supported12;
     supported12.pNext = &supported13;
     supported13.pNext = &supportedDescriptorBuffer;
 
     VkPhysicalDeviceFeatures2 supportedFeatures{};
     supportedFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    supportedFeatures.pNext = &supported12;
+    supportedFeatures.pNext = &supported11;
     vkGetPhysicalDeviceFeatures2(m_physicalDevice, &supportedFeatures);
 
+    WEST_CHECK(supported11.shaderDrawParameters == VK_TRUE, "Vulkan shader draw parameters are required");
     WEST_CHECK(supported13.dynamicRendering == VK_TRUE, "Vulkan 1.3 dynamic rendering is required");
     WEST_CHECK(supported13.synchronization2 == VK_TRUE, "Vulkan 1.3 synchronization2 is required");
     WEST_CHECK(supported12.timelineSemaphore == VK_TRUE, "Vulkan timeline semaphore is required");
@@ -434,8 +445,13 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
     features13.dynamicRendering = VK_TRUE;
     features13.synchronization2 = VK_TRUE;
 
+    VkPhysicalDeviceVulkan11Features features11{};
+    features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    features11.shaderDrawParameters = VK_TRUE;
+
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features11.pNext = &features12;
     features12.pNext = &features13;
     features12.timelineSemaphore = VK_TRUE;
     features12.bufferDeviceAddress = VK_TRUE;
@@ -452,7 +468,7 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
 
     VkPhysicalDeviceFeatures2 features2{};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features2.pNext = &features12;
+    features2.pNext = &features11;
     features2.features.samplerAnisotropy = VK_TRUE;
 
     // Device fault feature
@@ -752,8 +768,18 @@ std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(RHIQueueType ty
 
 IRHIQueue* VulkanDevice::GetQueue(RHIQueueType type)
 {
-    WEST_ASSERT(type == RHIQueueType::Graphics);
-    return m_graphicsQueue.get();
+    switch (type)
+    {
+    case RHIQueueType::Graphics:
+        return m_graphicsQueue.get();
+    case RHIQueueType::Compute:
+        return m_computeQueue.get();
+    case RHIQueueType::Copy:
+        return m_copyQueue.get();
+    }
+
+    WEST_ASSERT(false);
+    return nullptr;
 }
 
 std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const RHISwapChainDesc& desc)
@@ -795,6 +821,16 @@ std::unique_ptr<IRHITexture> VulkanDevice::CreateTexture(const RHITextureDesc& d
     auto texture = std::make_unique<VulkanTexture>();
     texture->Initialize(this, desc);
     return texture;
+}
+
+std::unique_ptr<IRHIBuffer> VulkanDevice::CreateTransientBuffer(const RHIBufferDesc& desc, uint32_t /*aliasSlot*/)
+{
+    return CreateBuffer(desc);
+}
+
+std::unique_ptr<IRHITexture> VulkanDevice::CreateTransientTexture(const RHITextureDesc& desc, uint32_t /*aliasSlot*/)
+{
+    return CreateTexture(desc);
 }
 
 std::unique_ptr<IRHISampler> VulkanDevice::CreateSampler(const RHISamplerDesc& desc)

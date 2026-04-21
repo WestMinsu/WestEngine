@@ -30,6 +30,13 @@ namespace west::shader
 class PSOCache;
 } // namespace west::shader
 
+namespace west::render
+{
+class ForwardTexturedQuadPass;
+class ToneMappingPass;
+class TransientResourcePool;
+} // namespace west::render
+
 namespace west
 {
 
@@ -77,7 +84,6 @@ private:
     // Per-frame resources (Frame-in-Flight)
     static constexpr uint32 kMaxFramesInFlight = 2;
 
-    std::vector<std::unique_ptr<rhi::IRHICommandList>> m_commandLists;
     std::vector<std::unique_ptr<rhi::IRHISemaphore>> m_acquireSemaphores; // Vulkan only (sized by flight frames)
     std::vector<std::unique_ptr<rhi::IRHISemaphore>> m_presentSemaphores; // Vulkan only (sized by swapchain buffers)
     std::vector<uint64> m_fenceValues;
@@ -90,8 +96,10 @@ private:
     std::unique_ptr<rhi::IRHIBuffer> m_quadIB;
     std::unique_ptr<rhi::IRHITexture> m_checkerTexture;
     std::unique_ptr<rhi::IRHISampler> m_checkerSampler;
-    rhi::IRHIPipeline* m_texturedQuadPipeline = nullptr;
     std::unique_ptr<shader::PSOCache> m_psoCache;
+    std::unique_ptr<render::TransientResourcePool> m_transientResourcePool;
+    std::unique_ptr<render::ForwardTexturedQuadPass> m_forwardTexturedQuadPass;
+    std::unique_ptr<render::ToneMappingPass> m_toneMappingPass;
 };
 
 } // namespace west

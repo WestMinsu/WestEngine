@@ -76,6 +76,8 @@ DX12Device::~DX12Device()
 
     // Destroy queues before device
     m_graphicsQueue.reset();
+    m_computeQueue.reset();
+    m_copyQueue.reset();
 
     // Check for device removed before final release
     if (m_device && m_dredEnabled)
@@ -388,6 +390,12 @@ void DX12Device::CreateQueues()
 {
     m_graphicsQueue = std::make_unique<DX12Queue>();
     m_graphicsQueue->Initialize(m_device.Get(), RHIQueueType::Graphics);
+
+    m_computeQueue = std::make_unique<DX12Queue>();
+    m_computeQueue->Initialize(m_device.Get(), RHIQueueType::Compute);
+
+    m_copyQueue = std::make_unique<DX12Queue>();
+    m_copyQueue->Initialize(m_device.Get(), RHIQueueType::Copy);
 }
 
 void DX12Device::CreateBindlessHeaps()
@@ -458,9 +466,18 @@ std::unique_ptr<IRHICommandList> DX12Device::CreateCommandList(RHIQueueType type
 
 IRHIQueue* DX12Device::GetQueue(RHIQueueType type)
 {
-    // Phase 1: only Graphics queue
-    WEST_ASSERT(type == RHIQueueType::Graphics);
-    return m_graphicsQueue.get();
+    switch (type)
+    {
+    case RHIQueueType::Graphics:
+        return m_graphicsQueue.get();
+    case RHIQueueType::Compute:
+        return m_computeQueue.get();
+    case RHIQueueType::Copy:
+        return m_copyQueue.get();
+    }
+
+    WEST_ASSERT(false);
+    return nullptr;
 }
 
 std::unique_ptr<IRHISwapChain> DX12Device::CreateSwapChain(const RHISwapChainDesc& desc)
@@ -472,22 +489,29 @@ std::unique_ptr<IRHISwapChain> DX12Device::CreateSwapChain(const RHISwapChainDes
 
 void DX12Device::WaitIdle()
 {
-    if (m_graphicsQueue)
+    auto waitQueueIdle = [&](DX12Queue* queue)
     {
-        // Create a temporary fence to flush the queue
+        if (!queue)
+        {
+            return;
+        }
+
         ComPtr<ID3D12Fence> fence;
         WEST_HR_CHECK(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
 
         HANDLE event = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
         WEST_ASSERT(event != nullptr);
 
-        auto* queue = static_cast<DX12Queue*>(m_graphicsQueue.get());
         queue->GetD3DQueue()->Signal(fence.Get(), 1);
 
         fence->SetEventOnCompletion(1, event);
         ::WaitForSingleObject(event, INFINITE);
         ::CloseHandle(event);
-    }
+    };
+
+    waitQueueIdle(m_copyQueue.get());
+    waitQueueIdle(m_computeQueue.get());
+    waitQueueIdle(m_graphicsQueue.get());
 }
 
 const char* DX12Device::GetDeviceName() const
@@ -514,6 +538,16 @@ std::unique_ptr<IRHITexture> DX12Device::CreateTexture(const RHITextureDesc& des
     auto texture = std::make_unique<DX12Texture>();
     texture->Initialize(this, desc);
     return texture;
+}
+
+std::unique_ptr<IRHIBuffer> DX12Device::CreateTransientBuffer(const RHIBufferDesc& desc, uint32_t /*aliasSlot*/)
+{
+    return CreateBuffer(desc);
+}
+
+std::unique_ptr<IRHITexture> DX12Device::CreateTransientTexture(const RHITextureDesc& desc, uint32_t /*aliasSlot*/)
+{
+    return CreateTexture(desc);
 }
 
 std::unique_ptr<IRHISampler> DX12Device::CreateSampler(const RHISamplerDesc& desc)

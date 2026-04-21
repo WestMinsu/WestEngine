@@ -143,10 +143,10 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
+    vertexInputInfo.vertexBindingDescriptionCount = vertexAttribs.empty() ? 0u : 1u;
+    vertexInputInfo.pVertexBindingDescriptions = vertexAttribs.empty() ? nullptr : &bindingDesc;
     vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttribs.size());
-    vertexInputInfo.pVertexAttributeDescriptions = vertexAttribs.data();
+    vertexInputInfo.pVertexAttributeDescriptions = vertexAttribs.empty() ? nullptr : vertexAttribs.data();
 
     // ── Input Assembly ──
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};

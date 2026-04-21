@@ -77,6 +77,13 @@ west_add_slang_shader(
     FRAGMENT PSMain
 )
 
+west_add_slang_shader(
+    NAME ToneMapping
+    SOURCE shaders/ToneMapping.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
 west_finalize_slang_shaders()
 
 # ── Engine Targets ──────────────────────────────────────────────────────────

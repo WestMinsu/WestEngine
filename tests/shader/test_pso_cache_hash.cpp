@@ -64,6 +64,16 @@ public:
         return nullptr;
     }
 
+    std::unique_ptr<rhi::IRHIBuffer> CreateTransientBuffer(const rhi::RHIBufferDesc&, uint32_t) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHITexture> CreateTransientTexture(const rhi::RHITextureDesc&, uint32_t) override
+    {
+        return nullptr;
+    }
+
     std::unique_ptr<rhi::IRHISampler> CreateSampler(const rhi::RHISamplerDesc&) override
     {
         return nullptr;

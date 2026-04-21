@@ -31,6 +31,8 @@ public:
     // ── IRHIDevice interface ──────────────────────────────────────────
     std::unique_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) override;
     std::unique_ptr<IRHITexture> CreateTexture(const RHITextureDesc& desc) override;
+    std::unique_ptr<IRHIBuffer> CreateTransientBuffer(const RHIBufferDesc& desc, uint32_t aliasSlot) override;
+    std::unique_ptr<IRHITexture> CreateTransientTexture(const RHITextureDesc& desc, uint32_t aliasSlot) override;
     std::unique_ptr<IRHISampler> CreateSampler(const RHISamplerDesc& desc) override;
     std::unique_ptr<IRHIPipeline> CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
     std::unique_ptr<IRHIPipeline> CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
@@ -121,8 +123,9 @@ private:
     DXGI_ADAPTER_DESC3 m_adapterDesc{};
 
     std::unique_ptr<DX12Queue> m_graphicsQueue;
+    std::unique_ptr<DX12Queue> m_computeQueue;
+    std::unique_ptr<DX12Queue> m_copyQueue;
     std::unique_ptr<DX12MemoryAllocator> m_memoryAllocator;
-    // TODO(minsu): Phase 5 — Dedicated async compute/copy queues
 
     static constexpr uint32_t kBindlessCapacity = 4096;
     ComPtr<ID3D12DescriptorHeap> m_resourceDescriptorHeap;
