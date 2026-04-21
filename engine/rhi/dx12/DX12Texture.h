@@ -54,6 +54,7 @@ public:
 private:
     D3D12MA::Allocation* m_allocation = nullptr;
     ID3D12Resource* m_resource = nullptr; // Owned by allocation, non-owning for swapchain
+    ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE m_rtvHandle = {};
     RHITextureDesc m_desc{};
     BindlessIndex m_bindlessIndex = kInvalidBindlessIndex;

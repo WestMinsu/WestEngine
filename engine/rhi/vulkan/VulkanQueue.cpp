@@ -8,6 +8,8 @@
 #include "rhi/vulkan/VulkanFence.h"
 #include "rhi/vulkan/VulkanSemaphore.h"
 
+#include <vector>
+
 namespace west::rhi
 {
 
@@ -26,58 +28,85 @@ void VulkanQueue::Initialize(VkQueue queue, uint32_t familyIndex, RHIQueueType t
 
 void VulkanQueue::Submit(const RHISubmitInfo& info)
 {
-    WEST_ASSERT(info.commandList != nullptr);
+    WEST_ASSERT(!info.commandLists.empty());
 
-    auto* vkCmdList = static_cast<VulkanCommandList*>(info.commandList);
-
-    VkCommandBufferSubmitInfo cmdBufInfo{};
-    cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    cmdBufInfo.commandBuffer = vkCmdList->GetVkCommandBuffer();
+    std::vector<VkCommandBufferSubmitInfo> commandBufferInfos;
+    commandBufferInfos.reserve(info.commandLists.size());
+    for (IRHICommandList* commandList : info.commandLists)
+    {
+        auto* vkCmdList = static_cast<VulkanCommandList*>(commandList);
+        VkCommandBufferSubmitInfo cmdBufInfo{};
+        cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        cmdBufInfo.commandBuffer = vkCmdList->GetVkCommandBuffer();
+        commandBufferInfos.push_back(cmdBufInfo);
+    }
 
     VkSubmitInfo2 submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    submitInfo.commandBufferInfoCount = 1;
-    submitInfo.pCommandBufferInfos = &cmdBufInfo;
+    submitInfo.commandBufferInfoCount = static_cast<uint32_t>(commandBufferInfos.size());
+    submitInfo.pCommandBufferInfos = commandBufferInfos.data();
 
-    // Wait semaphore (binary — swapchain acquire)
-    VkSemaphoreSubmitInfo waitSemInfo{};
+    std::vector<VkSemaphoreSubmitInfo> waitInfos;
+    waitInfos.reserve(info.timelineWaits.size() + (info.waitSemaphore ? 1u : 0u));
     if (info.waitSemaphore)
     {
         auto* vkWaitSem = static_cast<VulkanSemaphore*>(info.waitSemaphore);
+        VkSemaphoreSubmitInfo waitSemInfo{};
         waitSemInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
         waitSemInfo.semaphore = vkWaitSem->GetVkSemaphore();
-        waitSemInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        submitInfo.waitSemaphoreInfoCount = 1;
-        submitInfo.pWaitSemaphoreInfos = &waitSemInfo;
+        waitSemInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        waitInfos.push_back(waitSemInfo);
     }
 
-    // Signal semaphores — timeline fence + binary present
-    VkSemaphoreSubmitInfo signalInfos[2]{};
-    uint32_t signalCount = 0;
-
-    // Timeline semaphore (fence)
-    if (info.signalFence)
+    for (const RHITimelineWaitDesc& waitDesc : info.timelineWaits)
     {
-        auto* vkFence = static_cast<VulkanFence*>(info.signalFence);
-        signalInfos[signalCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        signalInfos[signalCount].semaphore = vkFence->GetVkSemaphore();
-        signalInfos[signalCount].value = info.signalValue;
-        signalInfos[signalCount].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        signalCount++;
+        if (!waitDesc.fence)
+        {
+            continue;
+        }
+
+        auto* vkFence = static_cast<VulkanFence*>(waitDesc.fence);
+        VkSemaphoreSubmitInfo waitInfo{};
+        waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        waitInfo.semaphore = vkFence->GetVkSemaphore();
+        waitInfo.value = waitDesc.value;
+        waitInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        waitInfos.push_back(waitInfo);
     }
 
-    // Binary semaphore (present)
+    submitInfo.waitSemaphoreInfoCount = static_cast<uint32_t>(waitInfos.size());
+    submitInfo.pWaitSemaphoreInfos = waitInfos.data();
+
+    std::vector<VkSemaphoreSubmitInfo> signalInfos;
+    signalInfos.reserve(info.timelineSignals.size() + (info.signalSemaphore ? 1u : 0u));
+    for (const RHITimelineSignalDesc& signalDesc : info.timelineSignals)
+    {
+        if (!signalDesc.fence)
+        {
+            continue;
+        }
+
+        auto* vkFence = static_cast<VulkanFence*>(signalDesc.fence);
+        VkSemaphoreSubmitInfo signalInfo{};
+        signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signalInfo.semaphore = vkFence->GetVkSemaphore();
+        signalInfo.value = signalDesc.value;
+        signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        signalInfos.push_back(signalInfo);
+    }
+
     if (info.signalSemaphore)
     {
         auto* vkSigSem = static_cast<VulkanSemaphore*>(info.signalSemaphore);
-        signalInfos[signalCount].sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        signalInfos[signalCount].semaphore = vkSigSem->GetVkSemaphore();
-        signalInfos[signalCount].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        signalCount++;
+        VkSemaphoreSubmitInfo signalInfo{};
+        signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signalInfo.semaphore = vkSigSem->GetVkSemaphore();
+        signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        signalInfos.push_back(signalInfo);
     }
 
-    submitInfo.signalSemaphoreInfoCount = signalCount;
-    submitInfo.pSignalSemaphoreInfos = signalInfos;
+    submitInfo.signalSemaphoreInfoCount = static_cast<uint32_t>(signalInfos.size());
+    submitInfo.pSignalSemaphoreInfos = signalInfos.data();
 
     WEST_VK_CHECK(vkQueueSubmit2(m_queue, 1, &submitInfo, VK_NULL_HANDLE));
 }

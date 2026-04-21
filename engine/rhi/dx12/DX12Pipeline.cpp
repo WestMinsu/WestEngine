@@ -134,7 +134,7 @@ void DX12Pipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* rootSig
     psoDesc.PS.BytecodeLength = desc.fragmentShader.size();
 
     // Input layout
-    psoDesc.InputLayout.pInputElementDescs = inputLayout.data();
+    psoDesc.InputLayout.pInputElementDescs = inputLayout.empty() ? nullptr : inputLayout.data();
     psoDesc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
 
     // Rasterizer state

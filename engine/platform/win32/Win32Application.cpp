@@ -9,6 +9,10 @@
 #include "core/Profiler.h"
 #include "core/Threading/TaskSystem.h"
 #include "generated/ShaderMetadata.h"
+#include "render/Passes/ForwardTexturedQuadPass.h"
+#include "render/Passes/ToneMappingPass.h"
+#include "render/RenderGraph/RenderGraph.h"
+#include "render/RenderGraph/TransientResourcePool.h"
 #include "rhi/interface/IRHIBuffer.h"
 #include "rhi/interface/IRHICommandList.h"
 #include "rhi/interface/IRHIDevice.h"
@@ -30,6 +34,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <string_view>
 #include <system_error>
@@ -130,6 +135,10 @@ bool Win32Application::Initialize()
         {
             m_enableGPUCrashDiag = false;
         }
+        else if (arg == "--enable-pix")
+        {
+            m_enablePixCapture = true;
+        }
 
         if (arg == "--smoke-test")
         {
@@ -138,6 +147,8 @@ bool Win32Application::Initialize()
         }
 
         static constexpr std::string_view kFramesPrefix = "--frames=";
+        static constexpr std::string_view kPixCaptureFramePrefix = "--pix-capture-frame=";
+        static constexpr std::string_view kRenderDocCaptureFramePrefix = "--renderdoc-capture-frame=";
         if (arg.starts_with(kFramesPrefix))
         {
             const std::string_view frameText = arg.substr(kFramesPrefix.size());
@@ -155,6 +166,41 @@ bool Win32Application::Initialize()
                 WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid frame limit argument: {}", arg);
             }
         }
+        else if (arg.starts_with(kPixCaptureFramePrefix))
+        {
+            const std::string_view frameText = arg.substr(kPixCaptureFramePrefix.size());
+            uint32 parsedFrame = 0;
+            const char* begin = frameText.data();
+            const char* end = begin + frameText.size();
+            const auto [ptr, ec] = std::from_chars(begin, end, parsedFrame);
+            if (ec == std::errc{} && ptr == end && parsedFrame > 0)
+            {
+                m_pixCaptureFrame = parsedFrame;
+                m_enablePixCapture = true;
+                WEST_LOG_INFO(LogCategory::Core, "PIX capture requested for frame {}.", parsedFrame);
+            }
+            else
+            {
+                WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid PIX capture frame argument: {}", arg);
+            }
+        }
+        else if (arg.starts_with(kRenderDocCaptureFramePrefix))
+        {
+            const std::string_view frameText = arg.substr(kRenderDocCaptureFramePrefix.size());
+            uint32 parsedFrame = 0;
+            const char* begin = frameText.data();
+            const char* end = begin + frameText.size();
+            const auto [ptr, ec] = std::from_chars(begin, end, parsedFrame);
+            if (ec == std::errc{} && ptr == end && parsedFrame > 0)
+            {
+                m_renderDocCaptureFrame = parsedFrame;
+                WEST_LOG_INFO(LogCategory::Core, "RenderDoc capture requested for frame {}.", parsedFrame);
+            }
+            else
+            {
+                WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid RenderDoc capture frame argument: {}", arg);
+            }
+        }
     }
 
     if (m_enableDX12GPUBasedValidation && !m_enableValidation)
@@ -167,6 +213,11 @@ bool Win32Application::Initialize()
         WEST_LOG_WARNING(LogCategory::Core, "Ignoring --dx12-gbv because the active backend is not DX12.");
         m_enableDX12GPUBasedValidation = false;
     }
+    if (m_enablePixCapture && m_backend != rhi::RHIBackend::DX12)
+    {
+        WEST_LOG_WARNING(LogCategory::Core, "Ignoring --enable-pix because the active backend is not DX12.");
+        m_enablePixCapture = false;
+    }
 
     Logger::Log(LogLevel::Info, LogCategory::Core,
                 std::format("Launch config: build={}, backend={}, validation={}, dx12GBV={}, gpuCrashDiag={}, "
@@ -174,7 +225,14 @@ bool Win32Application::Initialize()
                             BuildConfigName(), BackendName(m_backend), OnOff(m_enableValidation),
                             OnOff(m_enableDX12GPUBasedValidation), OnOff(m_enableGPUCrashDiag), m_maxFrameCount));
 
+    if (m_enablePixCapture)
+    {
+        m_pixGpuCapturerLoader.Initialize();
+        m_pixProgrammaticCapture.Initialize();
+    }
+
     InitializeRHI();
+    m_renderDocCapture.Initialize();
 
     m_timer.Reset();
     m_isRunning = true;
@@ -232,13 +290,7 @@ void Win32Application::InitializeRHI()
     m_psoCache = std::make_unique<shader::PSOCache>();
 
     // Create per-frame resources
-    m_commandLists.resize(kMaxFramesInFlight);
     m_fenceValues.resize(kMaxFramesInFlight, 0);
-
-    for (uint32 i = 0; i < kMaxFramesInFlight; ++i)
-    {
-        m_commandLists[i] = m_rhiDevice->CreateCommandList(rhi::RHIQueueType::Graphics);
-    }
 
     uint32 numSwapBuffers = m_swapChain->GetBufferCount();
     m_isFirstFrame.resize(numSwapBuffers, true);
@@ -263,6 +315,12 @@ void Win32Application::InitializeRHI()
 
     // Create bindless textured quad resources
     InitializeTexturedQuad();
+    m_transientResourcePool = std::make_unique<render::TransientResourcePool>();
+    m_forwardTexturedQuadPass = std::make_unique<render::ForwardTexturedQuadPass>(
+        *m_rhiDevice, *m_psoCache, m_backend, m_quadVB.get(), m_quadIB.get(), m_checkerTexture.get(),
+        m_checkerSampler.get());
+    m_toneMappingPass = std::make_unique<render::ToneMappingPass>(
+        *m_rhiDevice, *m_psoCache, m_backend, m_checkerSampler.get());
     RunCommandRecordingBenchmark();
 }
 
@@ -462,10 +520,13 @@ void Win32Application::InitializeTexturedQuad()
 
     // Submit and wait
     auto copyFence = m_rhiDevice->CreateFence(0);
+    std::vector<rhi::IRHICommandList*> copyCommandLists = {copyCmdList.get()};
+    std::vector<rhi::RHITimelineSignalDesc> copySignals = {{copyFence.get(), 1}};
     rhi::RHISubmitInfo copySubmit{};
-    copySubmit.commandList = copyCmdList.get();
-    copySubmit.signalFence = copyFence.get();
-    copySubmit.signalValue = 1;
+    copySubmit.commandLists =
+        std::span<rhi::IRHICommandList* const>(copyCommandLists.data(), copyCommandLists.size());
+    copySubmit.timelineSignals =
+        std::span<const rhi::RHITimelineSignalDesc>(copySignals.data(), copySignals.size());
 
     auto* queue = m_rhiDevice->GetQueue(rhi::RHIQueueType::Graphics);
     queue->Submit(copySubmit);
@@ -473,57 +534,7 @@ void Win32Application::InitializeTexturedQuad()
 
     WEST_LOG_INFO(LogCategory::RHI, "Textured quad resources uploaded (VB={} bytes, IB={} bytes, texture={}x{}).",
                   vbSize, ibSize, kTextureWidth, kTextureHeight);
-
-    std::vector<uint8_t> vsBytecode;
-    std::vector<uint8_t> psBytecode;
-
-    if (m_backend == rhi::RHIBackend::DX12)
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.vs.dxil", vsBytecode),
-                   "Failed to load TexturedQuad DXIL vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.ps.dxil", psBytecode),
-                   "Failed to load TexturedQuad DXIL pixel shader");
-    }
-    else
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.vs.spv", vsBytecode),
-                   "Failed to load TexturedQuad SPIR-V vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.ps.spv", psBytecode),
-                   "Failed to load TexturedQuad SPIR-V fragment shader");
-    }
-
-    const std::span<const uint8_t> vsData(vsBytecode.data(), vsBytecode.size());
-    const std::span<const uint8_t> psData(psBytecode.data(), psBytecode.size());
-
-    rhi::RHIVertexAttribute vertexAttribs[] = {
-        {"POSITION", rhi::RHIFormat::RGB32_FLOAT, 0},
-        {"TEXCOORD", rhi::RHIFormat::RG32_FLOAT, 12},
-    };
-
-    rhi::RHIFormat colorFormat = rhi::RHIFormat::BGRA8_UNORM;
-
-    rhi::RHIGraphicsPipelineDesc pipelineDesc{};
-    pipelineDesc.vertexShader = vsData;
-    pipelineDesc.fragmentShader = psData;
-    pipelineDesc.vertexAttributes = vertexAttribs;
-    pipelineDesc.vertexStride = vertexStride;
-    pipelineDesc.topology = rhi::RHIPrimitiveTopology::TriangleList;
-    pipelineDesc.cullMode = rhi::RHICullMode::None; // See both sides
-    pipelineDesc.depthTest = false;
-    pipelineDesc.depthWrite = false;
-    pipelineDesc.colorFormats = {&colorFormat, 1};
-    pipelineDesc.depthFormat = rhi::RHIFormat::Unknown;
-    pipelineDesc.pushConstantSizeBytes = shader::metadata::TexturedQuad::PushConstantSizeBytes;
-    pipelineDesc.debugName = "TexturedQuadPipeline";
-
-    WEST_CHECK(m_psoCache != nullptr, "PSO cache was not initialized");
-    m_texturedQuadPipeline = m_psoCache->GetOrCreateGraphicsPipeline(*m_rhiDevice, pipelineDesc);
-    WEST_CHECK(m_texturedQuadPipeline != nullptr, "Failed to create textured quad pipeline");
-
-    auto* cachedPipeline = m_psoCache->GetOrCreateGraphicsPipeline(*m_rhiDevice, pipelineDesc);
-    WEST_CHECK(cachedPipeline == m_texturedQuadPipeline, "PSO cache returned a different pipeline for the same desc");
-
-    WEST_LOG_INFO(LogCategory::RHI, "Bindless textured quad pipeline created (texture={}, sampler={}).",
+    WEST_LOG_INFO(LogCategory::RHI, "Bindless textured quad resources registered (texture={}, sampler={}).",
                   textureIndex, samplerIndex);
 }
 
@@ -601,6 +612,35 @@ void Win32Application::RenderFrame()
 {
     WEST_PROFILE_FUNCTION();
 
+    bool didBeginPixCapture = false;
+    const bool shouldCaptureWithPix =
+        m_pixCaptureFrame > 0 && (m_frameCount + 1) == m_pixCaptureFrame && m_pixProgrammaticCapture.IsAvailable();
+    if (shouldCaptureWithPix)
+    {
+        std::error_code error;
+        const std::filesystem::path captureDirectory = std::filesystem::current_path() / "artifacts" / "pix";
+        std::filesystem::create_directories(captureDirectory, error);
+        if (error)
+        {
+            WEST_LOG_WARNING(LogCategory::Core, "Failed to create PIX capture directory '{}': {}",
+                             captureDirectory.string(), error.message());
+        }
+        else
+        {
+            const std::filesystem::path capturePath = captureDirectory / "phase5-dx12.wpix";
+            WEST_LOG_INFO(LogCategory::Core, "Starting PIX capture for frame {}.", m_frameCount + 1);
+            didBeginPixCapture = m_pixProgrammaticCapture.BeginGpuCapture(capturePath.wstring());
+        }
+    }
+
+    const bool shouldCaptureWithRenderDoc =
+        m_renderDocCaptureFrame > 0 && (m_frameCount + 1) == m_renderDocCaptureFrame && m_renderDocCapture.IsAvailable();
+    if (shouldCaptureWithRenderDoc)
+    {
+        WEST_LOG_INFO(LogCategory::Core, "Starting RenderDoc capture for frame {}.", m_frameCount + 1);
+        m_renderDocCapture.BeginFrameCapture();
+    }
+
     const uint32 windowWidth = m_window->GetWidth();
     const uint32 windowHeight = m_window->GetHeight();
     if (windowWidth == 0 || windowHeight == 0)
@@ -644,105 +684,47 @@ void Win32Application::RenderFrame()
         return;
     }
 
-    // 3. Record commands
-    auto* cmdList = m_commandLists[frameIndex].get();
+    // 3. Build, compile, and execute the frame Render Graph
     auto* backBuffer = m_swapChain->GetCurrentBackBuffer();
-
-    cmdList->Reset();
-    cmdList->Begin();
-
-    // Transition: Undefined/Present → RenderTarget
-    rhi::RHIBarrierDesc barrierToRT{};
-    barrierToRT.type = rhi::RHIBarrierDesc::Type::Transition;
-    barrierToRT.texture = backBuffer;
-    barrierToRT.stateBefore = m_isFirstFrame[imageIndex] ? rhi::RHIResourceState::Undefined : rhi::RHIResourceState::Present;
-    barrierToRT.stateAfter = rhi::RHIResourceState::RenderTarget;
-    cmdList->ResourceBarrier(barrierToRT);
-
-    m_isFirstFrame[imageIndex] = false;
-
-    // ClearColor — animated cornflower blue
     float time = static_cast<float>(m_frameCount) * 0.01f;
     float r = 0.392f + 0.1f * std::sin(time);
     float g = 0.584f + 0.1f * std::sin(time * 0.7f);
     float b = 0.929f + 0.05f * std::sin(time * 1.3f);
+    WEST_ASSERT(m_forwardTexturedQuadPass != nullptr);
+    WEST_ASSERT(m_toneMappingPass != nullptr);
+    WEST_ASSERT(m_transientResourcePool != nullptr);
 
-    rhi::RHIColorAttachment colorAttach{};
-    colorAttach.texture = backBuffer;
-    colorAttach.loadOp = rhi::RHILoadOp::Clear;
-    colorAttach.storeOp = rhi::RHIStoreOp::Store;
-    colorAttach.clearColor[0] = r;
-    colorAttach.clearColor[1] = g;
-    colorAttach.clearColor[2] = b;
-    colorAttach.clearColor[3] = 1.0f;
+    render::RenderGraph graph;
+    const render::TextureHandle backBufferHandle =
+        graph.ImportTexture(backBuffer,
+                            m_isFirstFrame[imageIndex] ? rhi::RHIResourceState::Undefined
+                                                       : rhi::RHIResourceState::Present,
+                            rhi::RHIResourceState::Present, "SwapchainBackBuffer");
 
-    rhi::RHIRenderPassDesc passDesc{};
-    passDesc.colorAttachments = {&colorAttach, 1};
-    passDesc.debugName = "ClearColor Pass";
+    rhi::RHITextureDesc sceneColorDesc{};
+    sceneColorDesc.width = backBuffer->GetDesc().width;
+    sceneColorDesc.height = backBuffer->GetDesc().height;
+    sceneColorDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+    sceneColorDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+    sceneColorDesc.debugName = "SceneColorHDR";
 
-    cmdList->BeginRenderPass(passDesc);
+    const render::TextureHandle sceneColorHandle = graph.CreateTransientTexture(sceneColorDesc);
+    m_forwardTexturedQuadPass->Configure(sceneColorHandle, {r, g, b, 1.0f});
+    m_toneMappingPass->Configure(sceneColorHandle, backBufferHandle);
+    graph.AddPass(*m_forwardTexturedQuadPass);
+    graph.AddPass(*m_toneMappingPass);
+    graph.Compile();
 
-    if (m_texturedQuadPipeline && m_quadVB && m_quadIB && m_checkerTexture && m_checkerSampler)
-    {
-        auto& texDesc = backBuffer->GetDesc();
-        cmdList->SetViewport(0.0f, 0.0f, static_cast<float>(texDesc.width),
-                             static_cast<float>(texDesc.height));
-        cmdList->SetScissor(0, 0, texDesc.width, texDesc.height);
+    render::RenderGraph::ExecuteDesc executeDesc{
+        .device = *m_rhiDevice,
+        .timelineFence = *m_frameFence,
+        .transientResourcePool = *m_transientResourcePool,
+        .waitSemaphore = acquireSem,
+        .signalSemaphore = m_backend == rhi::RHIBackend::Vulkan ? m_presentSemaphores[imageIndex].get() : nullptr,
+    };
 
-        struct PushConstants
-        {
-            struct DescriptorHandle
-            {
-                rhi::BindlessIndex index;
-                uint32 unused;
-            };
-
-            DescriptorHandle texture;
-            DescriptorHandle sampler;
-        };
-
-        static_assert(sizeof(PushConstants) == shader::metadata::TexturedQuad::PushConstantSizeBytes);
-
-        PushConstants pushConstants{};
-        pushConstants.texture.index = m_checkerTexture->GetBindlessIndex();
-        pushConstants.sampler.index = m_checkerSampler->GetBindlessIndex();
-
-        cmdList->SetPipeline(m_texturedQuadPipeline);
-        cmdList->SetPushConstants(&pushConstants, sizeof(pushConstants));
-        cmdList->SetVertexBuffer(0, m_quadVB.get());
-        cmdList->SetIndexBuffer(m_quadIB.get(), rhi::RHIFormat::R32_UINT);
-        cmdList->DrawIndexed(6);
-    }
-
-    cmdList->EndRenderPass();
-
-    // Transition: RenderTarget → Present
-    rhi::RHIBarrierDesc barrierToPresent{};
-    barrierToPresent.type = rhi::RHIBarrierDesc::Type::Transition;
-    barrierToPresent.texture = backBuffer;
-    barrierToPresent.stateBefore = rhi::RHIResourceState::RenderTarget;
-    barrierToPresent.stateAfter = rhi::RHIResourceState::Present;
-    cmdList->ResourceBarrier(barrierToPresent);
-
-    cmdList->End();
-
-    // 4. Submit + signal fence
-    uint64 signalValue = m_frameFence->AdvanceValue();
-    m_fenceValues[frameIndex] = signalValue;
-
-    rhi::RHISubmitInfo submitInfo{};
-    submitInfo.commandList = cmdList;
-    submitInfo.signalFence = m_frameFence.get();
-    submitInfo.signalValue = signalValue;
-
-    if (m_backend == rhi::RHIBackend::Vulkan)
-    {
-        submitInfo.waitSemaphore = m_acquireSemaphores[frameIndex].get();
-        submitInfo.signalSemaphore = m_presentSemaphores[imageIndex].get();
-    }
-
-    auto* queue = m_rhiDevice->GetQueue(rhi::RHIQueueType::Graphics);
-    queue->Submit(submitInfo);
+    m_fenceValues[frameIndex] = graph.Execute(executeDesc);
+    m_isFirstFrame[imageIndex] = false;
 
     // 5. Present
     rhi::IRHISemaphore* presentSem = nullptr;
@@ -753,6 +735,21 @@ void Win32Application::RenderFrame()
     if (!m_swapChain->Present(presentSem))
     {
         ResizeSwapChain(windowWidth, windowHeight);
+    }
+
+    if (didBeginPixCapture)
+    {
+        m_frameFence->Wait(m_fenceValues[frameIndex]);
+        const bool captureSaved = m_pixProgrammaticCapture.EndCapture();
+        WEST_LOG_INFO(LogCategory::Core, "PIX capture for frame {} {}.", m_frameCount + 1,
+                      captureSaved ? "saved" : "ended without a saved capture");
+    }
+
+    if (shouldCaptureWithRenderDoc)
+    {
+        const bool captureSaved = m_renderDocCapture.EndFrameCapture();
+        WEST_LOG_INFO(LogCategory::Core, "RenderDoc capture for frame {} {}.", m_frameCount + 1,
+                      captureSaved ? "saved" : "ended without a saved capture");
     }
 
     m_frameCount++;
@@ -813,7 +810,14 @@ void Win32Application::ShutdownRHI()
         m_rhiDevice->UnregisterBindlessResource(m_checkerTexture->GetBindlessIndex());
     }
 
-    m_texturedQuadPipeline = nullptr;
+    if (m_transientResourcePool)
+    {
+        m_transientResourcePool->Reset(m_rhiDevice.get());
+    }
+
+    m_toneMappingPass.reset();
+    m_forwardTexturedQuadPass.reset();
+    m_transientResourcePool.reset();
     m_psoCache.reset();
     m_checkerSampler.reset();
     m_checkerTexture.reset();
@@ -821,7 +825,6 @@ void Win32Application::ShutdownRHI()
     m_quadVB.reset();
     m_presentSemaphores.clear();
     m_acquireSemaphores.clear();
-    m_commandLists.clear();
     m_frameFence.reset();
     m_swapChain.reset();
     m_rhiDevice.reset();

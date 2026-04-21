@@ -70,7 +70,10 @@ endif()
 # Application lifecycle and demo rendering loop. Depends on platform + RHI.
 if(WIN32)
     add_library(west_engine_runtime STATIC
+        platform/win32/PixGpuCapturerLoader.cpp
+        platform/win32/PixProgrammaticCapture.cpp
         platform/win32/Win32Application.cpp
+        platform/win32/RenderDocCapture.cpp
         rhi/RHIFactory.cpp
     )
 
@@ -134,6 +137,41 @@ add_dependencies(west_shader west_shaders)
 
 west_set_compiler_options(west_shader)
 
+# ── west_render ───────────────────────────────────────────────────────────
+# Render Graph, transient resources, and frame passes.
+add_library(west_render STATIC
+    render/RenderGraph/RenderGraph.cpp
+    render/RenderGraph/RenderGraphCompiler.cpp
+    render/RenderGraph/TransientResourcePool.cpp
+    render/Passes/ForwardTexturedQuadPass.cpp
+    render/Passes/ToneMappingPass.cpp
+)
+
+file(GLOB_RECURSE WEST_RENDER_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/render/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/render/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/render/*.inl"
+)
+
+target_sources(west_render PRIVATE ${WEST_RENDER_HEADERS})
+
+target_include_directories(west_render
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}
+)
+
+target_link_libraries(west_render
+    PUBLIC
+        west_rhi_interface
+    PRIVATE
+        west_shader
+)
+
+add_dependencies(west_render west_shader)
+
+west_set_compiler_options(west_render)
+
 # ── west_rhi_common ─────────────────────────────────────────────────────────
 # Shared utilities across backends (format conversion, etc.)
 add_library(west_rhi_common STATIC
@@ -154,6 +192,8 @@ target_link_libraries(west_rhi_common
 )
 
 west_set_compiler_options(west_rhi_common)
+
+target_link_libraries(west_render PRIVATE west_rhi_common)
 
 # ── west_rhi_dx12 ──────────────────────────────────────────────────────────
 # DX12 backend implementation. Depends on west_rhi_interface + DirectX 12.
@@ -265,6 +305,6 @@ if(TARGET west_engine_runtime AND TARGET west_rhi_vulkan)
 endif()
 
 if(TARGET west_engine_runtime)
-    target_link_libraries(west_engine_runtime PRIVATE west_shader)
-    add_dependencies(west_engine_runtime west_shader)
+    target_link_libraries(west_engine_runtime PRIVATE west_render west_shader)
+    add_dependencies(west_engine_runtime west_render west_shader)
 endif()

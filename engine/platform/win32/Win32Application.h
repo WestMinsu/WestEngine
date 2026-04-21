@@ -6,6 +6,9 @@
 
 #include "core/Timer.h"
 #include "platform/IApplication.h"
+#include "platform/win32/PixGpuCapturerLoader.h"
+#include "platform/win32/PixProgrammaticCapture.h"
+#include "platform/win32/RenderDocCapture.h"
 #include "platform/win32/Win32Window.h"
 #include "rhi/interface/RHIEnums.h"
 
@@ -29,6 +32,13 @@ namespace west::shader
 {
 class PSOCache;
 } // namespace west::shader
+
+namespace west::render
+{
+class ForwardTexturedQuadPass;
+class ToneMappingPass;
+class TransientResourcePool;
+} // namespace west::render
 
 namespace west
 {
@@ -66,9 +76,15 @@ private:
     bool m_enableValidation = false;
     bool m_enableDX12GPUBasedValidation = false;
     bool m_enableGPUCrashDiag = false;
+    bool m_enablePixCapture = false;
+    uint32 m_pixCaptureFrame = 0;
+    uint32 m_renderDocCaptureFrame = 0;
 
     // ── RHI ───────────────────────────────────────────────────────────
     rhi::RHIBackend m_backend = rhi::RHIBackend::DX12;
+    PixGpuCapturerLoader m_pixGpuCapturerLoader;
+    PixProgrammaticCapture m_pixProgrammaticCapture;
+    RenderDocCapture m_renderDocCapture;
 
     std::unique_ptr<rhi::IRHIDevice> m_rhiDevice;
     std::unique_ptr<rhi::IRHISwapChain> m_swapChain;
@@ -77,7 +93,6 @@ private:
     // Per-frame resources (Frame-in-Flight)
     static constexpr uint32 kMaxFramesInFlight = 2;
 
-    std::vector<std::unique_ptr<rhi::IRHICommandList>> m_commandLists;
     std::vector<std::unique_ptr<rhi::IRHISemaphore>> m_acquireSemaphores; // Vulkan only (sized by flight frames)
     std::vector<std::unique_ptr<rhi::IRHISemaphore>> m_presentSemaphores; // Vulkan only (sized by swapchain buffers)
     std::vector<uint64> m_fenceValues;
@@ -90,8 +105,10 @@ private:
     std::unique_ptr<rhi::IRHIBuffer> m_quadIB;
     std::unique_ptr<rhi::IRHITexture> m_checkerTexture;
     std::unique_ptr<rhi::IRHISampler> m_checkerSampler;
-    rhi::IRHIPipeline* m_texturedQuadPipeline = nullptr;
     std::unique_ptr<shader::PSOCache> m_psoCache;
+    std::unique_ptr<render::TransientResourcePool> m_transientResourcePool;
+    std::unique_ptr<render::ForwardTexturedQuadPass> m_forwardTexturedQuadPass;
+    std::unique_ptr<render::ToneMappingPass> m_toneMappingPass;
 };
 
 } // namespace west

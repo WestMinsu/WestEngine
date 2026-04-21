@@ -1,0 +1,33 @@
+﻿Queue ID, Parent, Name, Global ID
+0, -1, Reset, 
+1, -1, SetDescriptorHeaps, 
+2, -1, ResourceBarrier, 1
+3, -1, ClearRenderTargetView, 2
+4, -1, OMSetRenderTargets, 
+5, -1, RSSetViewports, 
+6, -1, RSSetScissorRects, 
+7, -1, SetPipelineState, 
+8, -1, SetGraphicsRootSignature, 
+9, -1, IASetPrimitiveTopology, 
+10, -1, SetGraphicsRoot32BitConstants, 
+11, -1, IASetVertexBuffers, 
+12, -1, IASetIndexBuffer, 
+13, -1, DrawIndexedInstanced, 3
+14, -1, ResourceBarrier, 4
+15, -1, ResourceBarrier, 5
+16, -1, OMSetRenderTargets, 
+17, -1, RSSetViewports, 
+18, -1, RSSetScissorRects, 
+19, -1, SetPipelineState, 
+20, -1, SetGraphicsRootSignature, 
+21, -1, IASetPrimitiveTopology, 
+22, -1, SetGraphicsRoot32BitConstants, 
+23, -1, DrawInstanced, 6
+24, -1, ResourceBarrier, 7
+25, -1, Close, 
+26, -1, Signal, 8
+27, -1, Reset, 
+28, -1, PrepareForPresent, 
+29, -1, Close, 
+30, -1, Signal, 9
+31, -1, Present, 10
