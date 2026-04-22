@@ -86,7 +86,7 @@ void VulkanBuffer::Initialize(VulkanDevice* device, const RHIBufferDesc& desc)
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = desc.sizeBytes;
     bufferInfo.usage = usageFlags;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    device->ConfigureQueueSharing(bufferInfo);
 
     // VMA allocation
     VmaAllocationCreateInfo allocInfo{};

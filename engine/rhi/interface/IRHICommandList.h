@@ -59,6 +59,13 @@ public:
 
     // ── Barrier ───────────────────────────────────────────────────────
     virtual void ResourceBarrier(const RHIBarrierDesc& desc) = 0;
+    virtual void ResourceBarriers(std::span<const RHIBarrierDesc> descs)
+    {
+        for (const RHIBarrierDesc& desc : descs)
+        {
+            ResourceBarrier(desc);
+        }
+    }
 
     // ── Copy ──────────────────────────────────────────────────────────
     virtual void CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst, uint64_t dstOffset,

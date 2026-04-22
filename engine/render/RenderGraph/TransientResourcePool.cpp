@@ -11,58 +11,54 @@
 namespace west::render
 {
 
-namespace
-{
-
-[[nodiscard]] bool SameTextureDesc(const rhi::RHITextureDesc& lhs, const rhi::RHITextureDesc& rhs)
-{
-    return lhs.width == rhs.width &&
-           lhs.height == rhs.height &&
-           lhs.depth == rhs.depth &&
-           lhs.mipLevels == rhs.mipLevels &&
-           lhs.arrayLayers == rhs.arrayLayers &&
-           lhs.format == rhs.format &&
-           lhs.usage == rhs.usage &&
-           lhs.dimension == rhs.dimension;
-}
-
-[[nodiscard]] bool SameBufferDesc(const rhi::RHIBufferDesc& lhs, const rhi::RHIBufferDesc& rhs)
-{
-    return lhs.sizeBytes == rhs.sizeBytes &&
-           lhs.structureByteStride == rhs.structureByteStride &&
-           lhs.usage == rhs.usage &&
-           lhs.memoryType == rhs.memoryType;
-}
-
-} // namespace
-
 void TransientResourcePool::Prepare(rhi::IRHIDevice& device, const CompiledRenderGraph& compiledGraph)
 {
     m_textures.resize(compiledGraph.resources.size());
     m_buffers.resize(compiledGraph.resources.size());
+    m_textureAliasSlots.resize(compiledGraph.resources.size(), kInvalidRenderGraphIndex);
+    m_bufferAliasSlots.resize(compiledGraph.resources.size(), kInvalidRenderGraphIndex);
 
     for (uint32_t resourceIndex = 0; resourceIndex < compiledGraph.resources.size(); ++resourceIndex)
     {
         const RenderGraphResourceInfo& resource = compiledGraph.resources[resourceIndex];
-        if (resource.imported)
+        const auto releaseTexture = [&]()
         {
-            continue;
-        }
-
-        if (resource.kind == ResourceKind::Texture)
-        {
-            if (m_textures[resourceIndex] && SameTextureDesc(m_textures[resourceIndex]->GetDesc(), resource.textureDesc))
-            {
-                continue;
-            }
-
             if (m_textures[resourceIndex] &&
                 m_textures[resourceIndex]->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
             {
                 device.UnregisterBindlessResource(m_textures[resourceIndex]->GetBindlessIndex());
             }
 
+            m_textures[resourceIndex].reset();
+            m_textureAliasSlots[resourceIndex] = kInvalidRenderGraphIndex;
+        };
+
+        const auto releaseBuffer = [&]()
+        {
+            m_buffers[resourceIndex].reset();
+            m_bufferAliasSlots[resourceIndex] = kInvalidRenderGraphIndex;
+        };
+
+        if (resource.imported || !resource.lifetime.IsValid())
+        {
+            releaseTexture();
+            releaseBuffer();
+            continue;
+        }
+
+        if (resource.kind == ResourceKind::Texture)
+        {
+            releaseBuffer();
+            if (m_textures[resourceIndex] &&
+                m_textures[resourceIndex]->GetDesc() == resource.textureDesc &&
+                m_textureAliasSlots[resourceIndex] == resource.alias.slot)
+            {
+                continue;
+            }
+
+            releaseTexture();
             m_textures[resourceIndex] = device.CreateTransientTexture(resource.textureDesc, resource.alias.slot);
+            m_textureAliasSlots[resourceIndex] = resource.alias.slot;
             if (m_textures[resourceIndex] &&
                 m_textures[resourceIndex]->GetBindlessIndex() == rhi::kInvalidBindlessIndex &&
                 HasFlag(resource.textureDesc.usage, rhi::RHITextureUsage::ShaderResource))
@@ -72,12 +68,17 @@ void TransientResourcePool::Prepare(rhi::IRHIDevice& device, const CompiledRende
         }
         else
         {
-            if (m_buffers[resourceIndex] && SameBufferDesc(m_buffers[resourceIndex]->GetDesc(), resource.bufferDesc))
+            releaseTexture();
+            if (m_buffers[resourceIndex] &&
+                m_buffers[resourceIndex]->GetDesc() == resource.bufferDesc &&
+                m_bufferAliasSlots[resourceIndex] == resource.alias.slot)
             {
                 continue;
             }
 
+            releaseBuffer();
             m_buffers[resourceIndex] = device.CreateTransientBuffer(resource.bufferDesc, resource.alias.slot);
+            m_bufferAliasSlots[resourceIndex] = resource.alias.slot;
         }
     }
 }
@@ -97,6 +98,8 @@ void TransientResourcePool::Reset(rhi::IRHIDevice* device)
 
     m_textures.clear();
     m_buffers.clear();
+    m_textureAliasSlots.clear();
+    m_bufferAliasSlots.clear();
 }
 
 rhi::IRHITexture* TransientResourcePool::GetTexture(uint32_t resourceIndex) const

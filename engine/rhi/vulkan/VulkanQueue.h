@@ -16,7 +16,7 @@ public:
     VulkanQueue() = default;
     ~VulkanQueue() override = default;
 
-    void Initialize(VkQueue queue, uint32_t familyIndex, RHIQueueType type);
+    void Initialize(VkQueue queue, uint32_t familyIndex, uint32_t queueIndex, RHIQueueType type);
 
     // ── IRHIQueue interface ───────────────────────────────────────────
     void Submit(const RHISubmitInfo& info) override;
@@ -34,10 +34,15 @@ public:
     {
         return m_familyIndex;
     }
+    uint32_t GetQueueIndex() const
+    {
+        return m_queueIndex;
+    }
 
 private:
     VkQueue m_queue = VK_NULL_HANDLE;
     uint32_t m_familyIndex = 0;
+    uint32_t m_queueIndex = 0;
     RHIQueueType m_type = RHIQueueType::Graphics;
 };
 

@@ -85,6 +85,78 @@ namespace
     return IsDepthFormat(texture->GetDesc().format) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
+void AppendBarrier(const RHIBarrierDesc& desc, std::vector<VkMemoryBarrier2>& memoryBarriers,
+                   std::vector<VkBufferMemoryBarrier2>& bufferBarriers,
+                   std::vector<VkImageMemoryBarrier2>& imageBarriers)
+{
+    if (desc.type == RHIBarrierDesc::Type::Transition && desc.texture)
+    {
+        auto* vkTex = static_cast<VulkanTexture*>(desc.texture);
+        auto [oldLayout, srcAccess, srcStage] = ConvertTextureState(desc.stateBefore, vkTex->GetDesc().format);
+        auto [newLayout, dstAccess, dstStage] = ConvertTextureState(desc.stateAfter, vkTex->GetDesc().format);
+
+        VkImageMemoryBarrier2 imageBarrier{};
+        imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        imageBarrier.srcStageMask = srcStage;
+        imageBarrier.srcAccessMask = srcAccess;
+        imageBarrier.dstStageMask = dstStage;
+        imageBarrier.dstAccessMask = dstAccess;
+        imageBarrier.oldLayout = oldLayout;
+        imageBarrier.newLayout = newLayout;
+        imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        imageBarrier.image = vkTex->GetVkImage();
+        imageBarrier.subresourceRange = {GetTextureAspectMask(vkTex), 0, vkTex->GetDesc().mipLevels,
+                                         0, vkTex->GetDesc().arrayLayers};
+        imageBarriers.push_back(imageBarrier);
+        return;
+    }
+
+    if (desc.type == RHIBarrierDesc::Type::Transition && desc.buffer)
+    {
+        auto* vkBuf = static_cast<VulkanBuffer*>(desc.buffer);
+        auto [srcAccess, srcStage] = ConvertBufferState(desc.stateBefore);
+        auto [dstAccess, dstStage] = ConvertBufferState(desc.stateAfter);
+
+        VkBufferMemoryBarrier2 bufferBarrier{};
+        bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+        bufferBarrier.srcStageMask = srcStage;
+        bufferBarrier.srcAccessMask = srcAccess;
+        bufferBarrier.dstStageMask = dstStage;
+        bufferBarrier.dstAccessMask = dstAccess;
+        bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bufferBarrier.buffer = vkBuf->GetVkBuffer();
+        bufferBarrier.offset = 0;
+        bufferBarrier.size = VK_WHOLE_SIZE;
+        bufferBarriers.push_back(bufferBarrier);
+        return;
+    }
+
+    if (desc.type == RHIBarrierDesc::Type::Aliasing)
+    {
+        VkMemoryBarrier2 memoryBarrier{};
+        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        memoryBarriers.push_back(memoryBarrier);
+        return;
+    }
+
+    if (desc.type == RHIBarrierDesc::Type::UAV)
+    {
+        VkMemoryBarrier2 memoryBarrier{};
+        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+        memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        memoryBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+        memoryBarriers.push_back(memoryBarrier);
+    }
+}
+
 } // namespace
 
 VulkanCommandList::~VulkanCommandList()
@@ -151,90 +223,43 @@ void VulkanCommandList::Reset()
 
 void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc& desc)
 {
-    if (desc.type == RHIBarrierDesc::Type::Transition && desc.texture)
+    ResourceBarriers(std::span<const RHIBarrierDesc>(&desc, 1));
+}
+
+void VulkanCommandList::ResourceBarriers(std::span<const RHIBarrierDesc> descs)
+{
+    if (descs.empty())
     {
-        auto* vkTex = static_cast<VulkanTexture*>(desc.texture);
-        auto [oldLayout, srcAccess, srcStage] = ConvertTextureState(desc.stateBefore, vkTex->GetDesc().format);
-        auto [newLayout, dstAccess, dstStage] = ConvertTextureState(desc.stateAfter, vkTex->GetDesc().format);
-
-        VkImageMemoryBarrier2 imageBarrier{};
-        imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        imageBarrier.srcStageMask = srcStage;
-        imageBarrier.srcAccessMask = srcAccess;
-        imageBarrier.dstStageMask = dstStage;
-        imageBarrier.dstAccessMask = dstAccess;
-        imageBarrier.oldLayout = oldLayout;
-        imageBarrier.newLayout = newLayout;
-        imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        imageBarrier.image = vkTex->GetVkImage();
-        imageBarrier.subresourceRange = {GetTextureAspectMask(vkTex), 0, vkTex->GetDesc().mipLevels,
-                                         0, vkTex->GetDesc().arrayLayers};
-
-        VkDependencyInfo depInfo{};
-        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        depInfo.imageMemoryBarrierCount = 1;
-        depInfo.pImageMemoryBarriers = &imageBarrier;
-
-        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
+        return;
     }
-    else if (desc.type == RHIBarrierDesc::Type::Transition && desc.buffer)
+
+    std::vector<VkMemoryBarrier2> memoryBarriers;
+    std::vector<VkBufferMemoryBarrier2> bufferBarriers;
+    std::vector<VkImageMemoryBarrier2> imageBarriers;
+    memoryBarriers.reserve(descs.size());
+    bufferBarriers.reserve(descs.size());
+    imageBarriers.reserve(descs.size());
+
+    for (const RHIBarrierDesc& desc : descs)
     {
-        auto* vkBuf = static_cast<VulkanBuffer*>(desc.buffer);
-        auto [srcAccess, srcStage] = ConvertBufferState(desc.stateBefore);
-        auto [dstAccess, dstStage] = ConvertBufferState(desc.stateAfter);
-
-        VkBufferMemoryBarrier2 bufBarrier{};
-        bufBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
-        bufBarrier.srcStageMask = srcStage;
-        bufBarrier.srcAccessMask = srcAccess;
-        bufBarrier.dstStageMask = dstStage;
-        bufBarrier.dstAccessMask = dstAccess;
-        bufBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bufBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bufBarrier.buffer = vkBuf->GetVkBuffer();
-        bufBarrier.offset = 0;
-        bufBarrier.size = VK_WHOLE_SIZE;
-
-        VkDependencyInfo depInfo{};
-        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        depInfo.bufferMemoryBarrierCount = 1;
-        depInfo.pBufferMemoryBarriers = &bufBarrier;
-
-        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
+        AppendBarrier(desc, memoryBarriers, bufferBarriers, imageBarriers);
     }
-    else if (desc.type == RHIBarrierDesc::Type::Aliasing)
+
+    if (memoryBarriers.empty() && bufferBarriers.empty() && imageBarriers.empty())
     {
-        VkMemoryBarrier2 memoryBarrier{};
-        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
-        memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        memoryBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        memoryBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-
-        VkDependencyInfo depInfo{};
-        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        depInfo.memoryBarrierCount = 1;
-        depInfo.pMemoryBarriers = &memoryBarrier;
-
-        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
+        return;
     }
-    else if (desc.type == RHIBarrierDesc::Type::UAV)
-    {
-        VkMemoryBarrier2 memoryBarrier{};
-        memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
-        memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        memoryBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
-        memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        memoryBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
 
-        VkDependencyInfo depInfo{};
-        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        depInfo.memoryBarrierCount = 1;
-        depInfo.pMemoryBarriers = &memoryBarrier;
+    VkDependencyInfo depInfo{};
+    depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    depInfo.memoryBarrierCount = static_cast<uint32_t>(memoryBarriers.size());
+    depInfo.pMemoryBarriers = memoryBarriers.data();
+    depInfo.bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size());
+    depInfo.pBufferMemoryBarriers = bufferBarriers.data();
+    depInfo.imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size());
+    depInfo.pImageMemoryBarriers = imageBarriers.data();
 
-        vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
-    }
+    vkCmdPipelineBarrier2(m_cmdBuffer, &depInfo);
 }
 
 // ── Viewport & Scissor ────────────────────────────────────────────────────

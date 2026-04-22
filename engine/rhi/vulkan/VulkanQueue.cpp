@@ -13,17 +13,18 @@
 namespace west::rhi
 {
 
-void VulkanQueue::Initialize(VkQueue queue, uint32_t familyIndex, RHIQueueType type)
+void VulkanQueue::Initialize(VkQueue queue, uint32_t familyIndex, uint32_t queueIndex, RHIQueueType type)
 {
     m_queue = queue;
     m_familyIndex = familyIndex;
+    m_queueIndex = queueIndex;
     m_type = type;
 
-    WEST_LOG_INFO(LogCategory::RHI, "Vulkan {} Queue acquired (family: {}).",
+    WEST_LOG_INFO(LogCategory::RHI, "Vulkan {} Queue acquired (family: {}, index: {}).",
                   (type == RHIQueueType::Graphics)  ? "Graphics"
                   : (type == RHIQueueType::Compute) ? "Compute"
                                                     : "Copy",
-                  familyIndex);
+                  familyIndex, queueIndex);
 }
 
 void VulkanQueue::Submit(const RHISubmitInfo& info)

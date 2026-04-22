@@ -58,6 +58,19 @@ struct RHIBufferDesc
     const char* debugName = nullptr;
 };
 
+[[nodiscard]] inline bool operator==(const RHIBufferDesc& lhs, const RHIBufferDesc& rhs)
+{
+    return lhs.sizeBytes == rhs.sizeBytes &&
+           lhs.structureByteStride == rhs.structureByteStride &&
+           lhs.usage == rhs.usage &&
+           lhs.memoryType == rhs.memoryType;
+}
+
+[[nodiscard]] inline bool operator!=(const RHIBufferDesc& lhs, const RHIBufferDesc& rhs)
+{
+    return !(lhs == rhs);
+}
+
 // ── Texture Descriptor ────────────────────────────────────────────────────
 
 struct RHITextureDesc
@@ -72,6 +85,23 @@ struct RHITextureDesc
     RHITextureDim dimension = RHITextureDim::Tex2D;
     const char* debugName = nullptr;
 };
+
+[[nodiscard]] inline bool operator==(const RHITextureDesc& lhs, const RHITextureDesc& rhs)
+{
+    return lhs.width == rhs.width &&
+           lhs.height == rhs.height &&
+           lhs.depth == rhs.depth &&
+           lhs.mipLevels == rhs.mipLevels &&
+           lhs.arrayLayers == rhs.arrayLayers &&
+           lhs.format == rhs.format &&
+           lhs.usage == rhs.usage &&
+           lhs.dimension == rhs.dimension;
+}
+
+[[nodiscard]] inline bool operator!=(const RHITextureDesc& lhs, const RHITextureDesc& rhs)
+{
+    return !(lhs == rhs);
+}
 
 // ── Sampler Descriptor ────────────────────────────────────────────────────
 

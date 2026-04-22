@@ -14,6 +14,98 @@
 namespace west::rhi
 {
 
+namespace
+{
+
+[[nodiscard]] D3D12_RESOURCE_STATES ConvertResourceState(RHIResourceState state)
+{
+    D3D12_RESOURCE_STATES d3dState = D3D12_RESOURCE_STATE_COMMON;
+
+    if (HasFlag(state, RHIResourceState::RenderTarget))
+        d3dState |= D3D12_RESOURCE_STATE_RENDER_TARGET;
+    if (HasFlag(state, RHIResourceState::Present))
+        d3dState |= D3D12_RESOURCE_STATE_PRESENT;
+    if (HasFlag(state, RHIResourceState::ShaderResource))
+        d3dState |= D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    if (HasFlag(state, RHIResourceState::UnorderedAccess))
+        d3dState |= D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    if (HasFlag(state, RHIResourceState::DepthStencilWrite))
+        d3dState |= D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    if (HasFlag(state, RHIResourceState::DepthStencilRead))
+        d3dState |= D3D12_RESOURCE_STATE_DEPTH_READ;
+    if (HasFlag(state, RHIResourceState::CopySource))
+        d3dState |= D3D12_RESOURCE_STATE_COPY_SOURCE;
+    if (HasFlag(state, RHIResourceState::CopyDest))
+        d3dState |= D3D12_RESOURCE_STATE_COPY_DEST;
+    if (HasFlag(state, RHIResourceState::VertexBuffer))
+        d3dState |= D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+    if (HasFlag(state, RHIResourceState::IndexBuffer))
+        d3dState |= D3D12_RESOURCE_STATE_INDEX_BUFFER;
+    if (HasFlag(state, RHIResourceState::IndirectArgument))
+        d3dState |= D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+
+    return d3dState;
+}
+
+[[nodiscard]] ID3D12Resource* ResolveBarrierResource(const RHIBarrierDesc& desc)
+{
+    if (desc.texture)
+    {
+        return static_cast<DX12Texture*>(desc.texture)->GetD3DResource();
+    }
+
+    if (desc.buffer)
+    {
+        return static_cast<DX12Buffer*>(desc.buffer)->GetD3DResource();
+    }
+
+    return nullptr;
+}
+
+[[nodiscard]] bool TryBuildD3D12Barrier(const RHIBarrierDesc& desc, D3D12_RESOURCE_BARRIER& barrier)
+{
+    barrier = {};
+
+    if (desc.type == RHIBarrierDesc::Type::Transition)
+    {
+        ID3D12Resource* resource = ResolveBarrierResource(desc);
+        if (!resource)
+        {
+            WEST_LOG_WARNING(LogCategory::RHI, "ResourceBarrier: no valid resource for transition");
+            return false;
+        }
+
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.StateBefore = ConvertResourceState(desc.stateBefore);
+        barrier.Transition.StateAfter = ConvertResourceState(desc.stateAfter);
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        return true;
+    }
+
+    if (desc.type == RHIBarrierDesc::Type::Aliasing)
+    {
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+        barrier.Aliasing.pResourceBefore =
+            desc.aliasBefore ? static_cast<DX12Texture*>(desc.aliasBefore)->GetD3DResource() : nullptr;
+        barrier.Aliasing.pResourceAfter =
+            desc.aliasAfter ? static_cast<DX12Texture*>(desc.aliasAfter)->GetD3DResource() : nullptr;
+        return true;
+    }
+
+    if (desc.type == RHIBarrierDesc::Type::UAV)
+    {
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = ResolveBarrierResource(desc);
+        return true;
+    }
+
+    return false;
+}
+
+} // namespace
+
 void DX12CommandList::Initialize(ID3D12Device* device, RHIQueueType type, ID3D12DescriptorHeap* resourceHeap,
                                  ID3D12DescriptorHeap* samplerHeap)
 {
@@ -85,95 +177,30 @@ void DX12CommandList::Reset()
 
 void DX12CommandList::ResourceBarrier(const RHIBarrierDesc& desc)
 {
-    if (desc.type == RHIBarrierDesc::Type::Transition)
+    ResourceBarriers(std::span<const RHIBarrierDesc>(&desc, 1));
+}
+
+void DX12CommandList::ResourceBarriers(std::span<const RHIBarrierDesc> descs)
+{
+    if (descs.empty())
     {
-        ID3D12Resource* resource = nullptr;
-
-        if (desc.texture)
-        {
-            auto* dx12Tex = static_cast<DX12Texture*>(desc.texture);
-            resource = dx12Tex->GetD3DResource();
-        }
-        // TODO(minsu): Phase 2 — buffer barriers via DX12Buffer
-        if (desc.buffer)
-        {
-            auto* dx12Buf = static_cast<DX12Buffer*>(desc.buffer);
-            resource = dx12Buf->GetD3DResource();
-        }
-
-        if (!resource)
-        {
-            WEST_LOG_WARNING(LogCategory::RHI, "ResourceBarrier: no valid resource for transition");
-            return;
-        }
-
-        // Convert RHIResourceState to D3D12_RESOURCE_STATES
-        auto convertState = [](RHIResourceState state) -> D3D12_RESOURCE_STATES
-        {
-            D3D12_RESOURCE_STATES d3dState = D3D12_RESOURCE_STATE_COMMON;
-
-            if (HasFlag(state, RHIResourceState::RenderTarget))
-                d3dState |= D3D12_RESOURCE_STATE_RENDER_TARGET;
-            if (HasFlag(state, RHIResourceState::Present))
-                d3dState |= D3D12_RESOURCE_STATE_PRESENT;
-            if (HasFlag(state, RHIResourceState::ShaderResource))
-                d3dState |= D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-            if (HasFlag(state, RHIResourceState::UnorderedAccess))
-                d3dState |= D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-            if (HasFlag(state, RHIResourceState::DepthStencilWrite))
-                d3dState |= D3D12_RESOURCE_STATE_DEPTH_WRITE;
-            if (HasFlag(state, RHIResourceState::DepthStencilRead))
-                d3dState |= D3D12_RESOURCE_STATE_DEPTH_READ;
-            if (HasFlag(state, RHIResourceState::CopySource))
-                d3dState |= D3D12_RESOURCE_STATE_COPY_SOURCE;
-            if (HasFlag(state, RHIResourceState::CopyDest))
-                d3dState |= D3D12_RESOURCE_STATE_COPY_DEST;
-            if (HasFlag(state, RHIResourceState::VertexBuffer))
-                d3dState |= D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
-            if (HasFlag(state, RHIResourceState::IndexBuffer))
-                d3dState |= D3D12_RESOURCE_STATE_INDEX_BUFFER;
-            if (HasFlag(state, RHIResourceState::IndirectArgument))
-                d3dState |= D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
-
-            return d3dState;
-        };
-
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        barrier.Transition.pResource = resource;
-        barrier.Transition.StateBefore = convertState(desc.stateBefore);
-        barrier.Transition.StateAfter = convertState(desc.stateAfter);
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-
-        m_cmdList->ResourceBarrier(1, &barrier);
+        return;
     }
-    else if (desc.type == RHIBarrierDesc::Type::Aliasing)
-    {
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
-        barrier.Aliasing.pResourceBefore =
-            desc.aliasBefore ? static_cast<DX12Texture*>(desc.aliasBefore)->GetD3DResource() : nullptr;
-        barrier.Aliasing.pResourceAfter =
-            desc.aliasAfter ? static_cast<DX12Texture*>(desc.aliasAfter)->GetD3DResource() : nullptr;
-        m_cmdList->ResourceBarrier(1, &barrier);
-    }
-    else if (desc.type == RHIBarrierDesc::Type::UAV)
-    {
-        ID3D12Resource* resource = nullptr;
-        if (desc.texture)
-        {
-            resource = static_cast<DX12Texture*>(desc.texture)->GetD3DResource();
-        }
-        else if (desc.buffer)
-        {
-            resource = static_cast<DX12Buffer*>(desc.buffer)->GetD3DResource();
-        }
 
+    std::vector<D3D12_RESOURCE_BARRIER> barriers;
+    barriers.reserve(descs.size());
+    for (const RHIBarrierDesc& desc : descs)
+    {
         D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-        barrier.UAV.pResource = resource;
-        m_cmdList->ResourceBarrier(1, &barrier);
+        if (TryBuildD3D12Barrier(desc, barrier))
+        {
+            barriers.push_back(barrier);
+        }
+    }
+
+    if (!barriers.empty())
+    {
+        m_cmdList->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
     }
 }
 

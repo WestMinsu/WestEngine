@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/Assert.h"
+#include "render/RenderGraph/CommandListPool.h"
 #include "render/RenderGraph/RenderGraphCompiler.h"
 #include "render/RenderGraph/RenderGraphPass.h"
 #include "render/RenderGraph/TransientResourcePool.h"
@@ -89,6 +90,7 @@ public:
         rhi::IRHIDevice& device;
         rhi::IRHIFence& timelineFence;
         TransientResourcePool& transientResourcePool;
+        CommandListPool* commandListPool = nullptr;
         rhi::IRHISemaphore* waitSemaphore = nullptr;
         rhi::IRHISemaphore* signalSemaphore = nullptr;
     };
@@ -96,6 +98,10 @@ public:
     TextureHandle ImportTexture(rhi::IRHITexture* texture, rhi::RHIResourceState initialState,
                                 rhi::RHIResourceState finalState, const char* debugName = nullptr);
     BufferHandle ImportBuffer(rhi::IRHIBuffer* buffer, rhi::RHIResourceState initialState,
+                              rhi::RHIResourceState finalState, const char* debugName = nullptr);
+    void UpdateImportedTexture(TextureHandle handle, rhi::IRHITexture* texture, rhi::RHIResourceState initialState,
+                               rhi::RHIResourceState finalState, const char* debugName = nullptr);
+    void UpdateImportedBuffer(BufferHandle handle, rhi::IRHIBuffer* buffer, rhi::RHIResourceState initialState,
                               rhi::RHIResourceState finalState, const char* debugName = nullptr);
 
     TextureHandle CreateTransientTexture(const rhi::RHITextureDesc& desc);

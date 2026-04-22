@@ -45,6 +45,7 @@ public:
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
     void EndRenderPass() override;
     void ResourceBarrier(const RHIBarrierDesc& desc) override;
+    void ResourceBarriers(std::span<const RHIBarrierDesc> descs) override;
 
     void CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst, uint64_t dstOffset, uint64_t size) override;
     void CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, const RHICopyRegion& region) override;

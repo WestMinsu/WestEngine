@@ -137,6 +137,7 @@ west_set_compiler_options(west_shader)
 # ── west_render ───────────────────────────────────────────────────────────
 # Render Graph, transient resources, and frame passes.
 add_library(west_render STATIC
+    render/RenderGraph/CommandListPool.cpp
     render/RenderGraph/RenderGraph.cpp
     render/RenderGraph/RenderGraphCompiler.cpp
     render/RenderGraph/TransientResourcePool.cpp

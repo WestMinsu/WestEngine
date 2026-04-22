@@ -31,6 +31,8 @@ public:
 private:
     std::vector<std::unique_ptr<rhi::IRHITexture>> m_textures;
     std::vector<std::unique_ptr<rhi::IRHIBuffer>> m_buffers;
+    std::vector<uint32_t> m_textureAliasSlots;
+    std::vector<uint32_t> m_bufferAliasSlots;
 };
 
 } // namespace west::render

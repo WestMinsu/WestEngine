@@ -3,11 +3,23 @@
 // Render Graph compile behavior
 // =============================================================================
 #include "render/RenderGraph/RenderGraph.h"
+#include "render/RenderGraph/CommandListPool.h"
 #include "render/RenderGraph/RenderGraphCompiler.h"
+#include "render/RenderGraph/TransientResourcePool.h"
+#include "rhi/interface/IRHICommandList.h"
+#include "rhi/interface/IRHIDevice.h"
+#include "rhi/interface/IRHIFence.h"
+#include "rhi/interface/IRHIPipeline.h"
+#include "rhi/interface/IRHIQueue.h"
+#include "rhi/interface/IRHISampler.h"
+#include "rhi/interface/IRHISemaphore.h"
+#include "rhi/interface/IRHISwapChain.h"
 #include "TestAssert.h"
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
+#include <vector>
 
 using namespace west;
 
@@ -41,10 +53,11 @@ class TestPass final : public render::RenderGraphPass
 public:
     using SetupFn = std::function<void(render::RenderGraphBuilder&)>;
 
-    TestPass(const char* debugName, rhi::RHIQueueType queueType, SetupFn setup)
+    TestPass(const char* debugName, rhi::RHIQueueType queueType, SetupFn setup, bool hasSideEffects = false)
         : m_debugName(debugName)
         , m_queueType(queueType)
         , m_setup(std::move(setup))
+        , m_hasSideEffects(hasSideEffects)
     {
     }
 
@@ -55,6 +68,11 @@ public:
 
     void Execute(render::RenderGraphContext&, rhi::IRHICommandList&) override
     {
+    }
+
+    bool HasSideEffects() const override
+    {
+        return m_hasSideEffects;
     }
 
     rhi::RHIQueueType GetQueueType() const override
@@ -71,6 +89,382 @@ private:
     const char* m_debugName = "TestPass";
     rhi::RHIQueueType m_queueType = rhi::RHIQueueType::Graphics;
     SetupFn m_setup;
+    bool m_hasSideEffects = false;
+};
+
+class FakeDevice final : public rhi::IRHIDevice
+{
+public:
+    std::unique_ptr<rhi::IRHIBuffer> CreateBuffer(const rhi::RHIBufferDesc&) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHITexture> CreateTexture(const rhi::RHITextureDesc& desc) override
+    {
+        return std::make_unique<FakeTexture>(desc);
+    }
+
+    std::unique_ptr<rhi::IRHIBuffer> CreateTransientBuffer(const rhi::RHIBufferDesc&, uint32_t) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHITexture> CreateTransientTexture(const rhi::RHITextureDesc& desc, uint32_t aliasSlot) override
+    {
+        ++transientTextureCreateCount;
+        observedAliasSlots.push_back(aliasSlot);
+        return std::make_unique<FakeTexture>(desc);
+    }
+
+    std::unique_ptr<rhi::IRHISampler> CreateSampler(const rhi::RHISamplerDesc&) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHIPipeline> CreateGraphicsPipeline(const rhi::RHIGraphicsPipelineDesc&) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHIPipeline> CreateComputePipeline(const rhi::RHIComputePipelineDesc&) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHIFence> CreateFence(uint64_t = 0) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHISemaphore> CreateBinarySemaphore() override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType) override
+    {
+        return nullptr;
+    }
+
+    rhi::IRHIQueue* GetQueue(rhi::RHIQueueType) override
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override
+    {
+        return nullptr;
+    }
+
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override
+    {
+        return rhi::kInvalidBindlessIndex;
+    }
+
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override
+    {
+        return rhi::kInvalidBindlessIndex;
+    }
+
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override
+    {
+        return rhi::kInvalidBindlessIndex;
+    }
+
+    void UnregisterBindlessResource(rhi::BindlessIndex) override
+    {
+    }
+
+    void WaitIdle() override
+    {
+    }
+
+    rhi::RHIBackend GetBackend() const override
+    {
+        return rhi::RHIBackend::DX12;
+    }
+
+    const char* GetDeviceName() const override
+    {
+        return "FakeDevice";
+    }
+
+    rhi::RHIDeviceCaps GetCapabilities() const override
+    {
+        return {};
+    }
+
+    void EnqueueDeferredDeletion(std::function<void()>, uint64_t) override
+    {
+    }
+
+    void FlushDeferredDeletions(uint64_t) override
+    {
+    }
+
+    void FlushAllDeferredDeletions() override
+    {
+    }
+
+    void SetCurrentFrameFenceValue(uint64_t fenceValue) override
+    {
+        currentFenceValue = fenceValue;
+    }
+
+    uint64_t GetCurrentFrameFenceValue() const override
+    {
+        return currentFenceValue;
+    }
+
+    uint32_t transientTextureCreateCount = 0;
+    uint64_t currentFenceValue = 0;
+    std::vector<uint32_t> observedAliasSlots;
+};
+
+class FakeCommandList final : public rhi::IRHICommandList
+{
+public:
+    explicit FakeCommandList(rhi::RHIQueueType queueType)
+        : m_queueType(queueType)
+    {
+    }
+
+    void Begin() override {}
+    void End() override {}
+    void Reset() override {}
+    void SetPipeline(rhi::IRHIPipeline*) override {}
+    void SetPushConstants(const void*, uint32_t) override {}
+    void SetVertexBuffer(uint32_t, rhi::IRHIBuffer*, uint64_t) override {}
+    void SetIndexBuffer(rhi::IRHIBuffer*, rhi::RHIFormat, uint64_t) override {}
+    void SetViewport(float, float, float, float, float, float) override {}
+    void SetScissor(int32_t, int32_t, uint32_t, uint32_t) override {}
+    void Draw(uint32_t, uint32_t, uint32_t, uint32_t) override {}
+    void DrawIndexed(uint32_t, uint32_t, uint32_t, int32_t, uint32_t) override {}
+    void DrawIndexedIndirectCount(rhi::IRHIBuffer*, uint64_t, rhi::IRHIBuffer*, uint64_t, uint32_t, uint32_t) override {}
+    void Dispatch(uint32_t, uint32_t, uint32_t) override {}
+    void BeginRenderPass(const rhi::RHIRenderPassDesc&) override {}
+    void EndRenderPass() override {}
+    void ResourceBarrier(const rhi::RHIBarrierDesc&) override {}
+    void ResourceBarriers(std::span<const rhi::RHIBarrierDesc>) override {}
+    void CopyBuffer(rhi::IRHIBuffer*, uint64_t, rhi::IRHIBuffer*, uint64_t, uint64_t) override {}
+    void CopyBufferToTexture(rhi::IRHIBuffer*, rhi::IRHITexture*, const rhi::RHICopyRegion&) override {}
+    void WriteTimestamp(rhi::IRHIBuffer*, uint32_t) override {}
+
+    rhi::RHIQueueType GetQueueType() const override
+    {
+        return m_queueType;
+    }
+
+private:
+    rhi::RHIQueueType m_queueType = rhi::RHIQueueType::Graphics;
+};
+
+class PoolFakeDevice final : public rhi::IRHIDevice
+{
+public:
+    std::unique_ptr<rhi::IRHIBuffer> CreateBuffer(const rhi::RHIBufferDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHITexture> CreateTexture(const rhi::RHITextureDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIBuffer> CreateTransientBuffer(const rhi::RHIBufferDesc&, uint32_t) override { return nullptr; }
+    std::unique_ptr<rhi::IRHITexture> CreateTransientTexture(const rhi::RHITextureDesc&, uint32_t) override { return nullptr; }
+    std::unique_ptr<rhi::IRHISampler> CreateSampler(const rhi::RHISamplerDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIPipeline> CreateGraphicsPipeline(const rhi::RHIGraphicsPipelineDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIPipeline> CreateComputePipeline(const rhi::RHIComputePipelineDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIFence> CreateFence(uint64_t = 0) override { return nullptr; }
+    std::unique_ptr<rhi::IRHISemaphore> CreateBinarySemaphore() override { return nullptr; }
+
+    std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType type) override
+    {
+        ++createCommandListCount;
+        return std::make_unique<FakeCommandList>(type);
+    }
+
+    rhi::IRHIQueue* GetQueue(rhi::RHIQueueType) override { return nullptr; }
+    std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override { return nullptr; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
+    void UnregisterBindlessResource(rhi::BindlessIndex) override {}
+    void WaitIdle() override {}
+    rhi::RHIBackend GetBackend() const override { return rhi::RHIBackend::DX12; }
+    const char* GetDeviceName() const override { return "PoolFakeDevice"; }
+    rhi::RHIDeviceCaps GetCapabilities() const override { return {}; }
+    void EnqueueDeferredDeletion(std::function<void()>, uint64_t) override {}
+    void FlushDeferredDeletions(uint64_t) override {}
+    void FlushAllDeferredDeletions() override {}
+    void SetCurrentFrameFenceValue(uint64_t) override {}
+    uint64_t GetCurrentFrameFenceValue() const override { return 0; }
+
+    uint32_t createCommandListCount = 0;
+};
+
+class FakeFence final : public rhi::IRHIFence
+{
+public:
+    uint64_t GetCompletedValue() const override
+    {
+        return completedValue;
+    }
+
+    void Wait(uint64_t value, uint64_t) override
+    {
+        completedValue = (std::max)(completedValue, value);
+    }
+
+    uint64_t AdvanceValue() override
+    {
+        return ++nextValue;
+    }
+
+    uint64_t completedValue = 0;
+    uint64_t nextValue = 0;
+};
+
+class RecordingCommandList final : public rhi::IRHICommandList
+{
+public:
+    explicit RecordingCommandList(rhi::RHIQueueType queueType)
+        : m_queueType(queueType)
+    {
+    }
+
+    void Begin() override {}
+    void End() override {}
+    void Reset() override {}
+    void SetPipeline(rhi::IRHIPipeline*) override {}
+    void SetPushConstants(const void*, uint32_t) override {}
+    void SetVertexBuffer(uint32_t, rhi::IRHIBuffer*, uint64_t) override {}
+    void SetIndexBuffer(rhi::IRHIBuffer*, rhi::RHIFormat, uint64_t) override {}
+    void SetViewport(float, float, float, float, float, float) override {}
+    void SetScissor(int32_t, int32_t, uint32_t, uint32_t) override {}
+    void Draw(uint32_t, uint32_t, uint32_t, uint32_t) override {}
+    void DrawIndexed(uint32_t, uint32_t, uint32_t, int32_t, uint32_t) override {}
+    void DrawIndexedIndirectCount(rhi::IRHIBuffer*, uint64_t, rhi::IRHIBuffer*, uint64_t, uint32_t, uint32_t) override {}
+    void Dispatch(uint32_t, uint32_t, uint32_t) override {}
+    void BeginRenderPass(const rhi::RHIRenderPassDesc&) override {}
+    void EndRenderPass() override {}
+
+    void ResourceBarrier(const rhi::RHIBarrierDesc&) override
+    {
+        ++singleBarrierCalls;
+    }
+
+    void ResourceBarriers(std::span<const rhi::RHIBarrierDesc> descs) override
+    {
+        barrierBatchSizes.push_back(static_cast<uint32_t>(descs.size()));
+    }
+
+    void CopyBuffer(rhi::IRHIBuffer*, uint64_t, rhi::IRHIBuffer*, uint64_t, uint64_t) override {}
+    void CopyBufferToTexture(rhi::IRHIBuffer*, rhi::IRHITexture*, const rhi::RHICopyRegion&) override {}
+    void WriteTimestamp(rhi::IRHIBuffer*, uint32_t) override {}
+
+    rhi::RHIQueueType GetQueueType() const override
+    {
+        return m_queueType;
+    }
+
+    uint32_t singleBarrierCalls = 0;
+    std::vector<uint32_t> barrierBatchSizes;
+
+private:
+    rhi::RHIQueueType m_queueType = rhi::RHIQueueType::Graphics;
+};
+
+class RecordingQueue final : public rhi::IRHIQueue
+{
+public:
+    explicit RecordingQueue(rhi::RHIQueueType type)
+        : m_type(type)
+    {
+    }
+
+    void Submit(const rhi::RHISubmitInfo& info) override
+    {
+        ++submitCount;
+        lastSubmitCommandListCount = static_cast<uint32_t>(info.commandLists.size());
+    }
+
+    rhi::RHIQueueType GetType() const override
+    {
+        return m_type;
+    }
+
+    uint32_t submitCount = 0;
+    uint32_t lastSubmitCommandListCount = 0;
+
+private:
+    rhi::RHIQueueType m_type = rhi::RHIQueueType::Graphics;
+};
+
+class ExecuteFakeDevice final : public rhi::IRHIDevice
+{
+public:
+    std::unique_ptr<rhi::IRHIBuffer> CreateBuffer(const rhi::RHIBufferDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHITexture> CreateTexture(const rhi::RHITextureDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIBuffer> CreateTransientBuffer(const rhi::RHIBufferDesc&, uint32_t) override { return nullptr; }
+    std::unique_ptr<rhi::IRHITexture> CreateTransientTexture(const rhi::RHITextureDesc&, uint32_t) override { return nullptr; }
+    std::unique_ptr<rhi::IRHISampler> CreateSampler(const rhi::RHISamplerDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIPipeline> CreateGraphicsPipeline(const rhi::RHIGraphicsPipelineDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIPipeline> CreateComputePipeline(const rhi::RHIComputePipelineDesc&) override { return nullptr; }
+    std::unique_ptr<rhi::IRHIFence> CreateFence(uint64_t = 0) override { return nullptr; }
+    std::unique_ptr<rhi::IRHISemaphore> CreateBinarySemaphore() override { return nullptr; }
+
+    std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType type) override
+    {
+        auto commandList = std::make_unique<RecordingCommandList>(type);
+        lastCommandList = commandList.get();
+        return commandList;
+    }
+
+    rhi::IRHIQueue* GetQueue(rhi::RHIQueueType type) override
+    {
+        switch (type)
+        {
+        case rhi::RHIQueueType::Graphics:
+            return &graphicsQueue;
+        case rhi::RHIQueueType::Compute:
+            return &computeQueue;
+        case rhi::RHIQueueType::Copy:
+            return &copyQueue;
+        }
+
+        return &graphicsQueue;
+    }
+
+    std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override { return nullptr; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
+    void UnregisterBindlessResource(rhi::BindlessIndex) override {}
+    void WaitIdle() override {}
+    rhi::RHIBackend GetBackend() const override { return rhi::RHIBackend::DX12; }
+    const char* GetDeviceName() const override { return "ExecuteFakeDevice"; }
+    rhi::RHIDeviceCaps GetCapabilities() const override { return {}; }
+    void EnqueueDeferredDeletion(std::function<void()> deleter, uint64_t) override
+    {
+        deferredDeletions.push_back(std::move(deleter));
+    }
+
+    void FlushDeferredDeletions(uint64_t) override
+    {
+    }
+
+    void FlushAllDeferredDeletions() override
+    {
+        for (auto& deleter : deferredDeletions)
+        {
+            deleter();
+        }
+        deferredDeletions.clear();
+    }
+    void SetCurrentFrameFenceValue(uint64_t) override {}
+    uint64_t GetCurrentFrameFenceValue() const override { return 0; }
+
+    RecordingCommandList* lastCommandList = nullptr;
+    RecordingQueue graphicsQueue{rhi::RHIQueueType::Graphics};
+    RecordingQueue computeQueue{rhi::RHIQueueType::Compute};
+    RecordingQueue copyQueue{rhi::RHIQueueType::Copy};
+    std::vector<std::function<void()>> deferredDeletions;
 };
 
 [[nodiscard]] bool HasTransition(const std::vector<render::CompiledBarrier>& barriers, uint32_t resourceIndex,
@@ -150,6 +544,42 @@ void TestImportedBackBufferTransitions()
                          rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::Present));
 }
 
+void TestImportedStateRefreshUpdatesCompiledBarriers()
+{
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc backBufferDesc{};
+    backBufferDesc.width = 1920;
+    backBufferDesc.height = 1080;
+    backBufferDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    backBufferDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::Present;
+    FakeTexture backBuffer(backBufferDesc);
+
+    const render::TextureHandle backBufferHandle =
+        graph.ImportTexture(&backBuffer, rhi::RHIResourceState::Present, rhi::RHIResourceState::Present, "BackBuffer");
+
+    TestPass pass("BackBufferWrite", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(backBufferHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(pass);
+    graph.Compile();
+    assert(HasTransition(graph.GetCompiledGraph().passes[0].preBarriers, backBufferHandle.index,
+                         rhi::RHIResourceState::Present, rhi::RHIResourceState::RenderTarget));
+
+    graph.UpdateImportedTexture(backBufferHandle, &backBuffer, rhi::RHIResourceState::Undefined,
+                                rhi::RHIResourceState::Present, "BackBuffer");
+
+    const render::CompiledRenderGraph& refreshedGraph = graph.GetCompiledGraph();
+    assert(HasTransition(refreshedGraph.passes[0].preBarriers, backBufferHandle.index,
+                         rhi::RHIResourceState::Undefined, rhi::RHIResourceState::RenderTarget));
+    assert(!HasTransition(refreshedGraph.passes[0].preBarriers, backBufferHandle.index,
+                          rhi::RHIResourceState::Present, rhi::RHIResourceState::RenderTarget));
+    assert(HasTransition(refreshedGraph.queueBatches[0].postBarriers, backBufferHandle.index,
+                         rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::Present));
+}
+
 void TestSceneColorTransition()
 {
     render::RenderGraph graph;
@@ -198,6 +628,19 @@ void TestAliasingPlan()
 {
     render::RenderGraph graph;
 
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sinkA(sinkDesc);
+    FakeTexture sinkB(sinkDesc);
+
+    const render::TextureHandle sinkAHandle =
+        graph.ImportTexture(&sinkA, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "SinkA");
+    const render::TextureHandle sinkBHandle =
+        graph.ImportTexture(&sinkB, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "SinkB");
+
     rhi::RHITextureDesc transientDesc{};
     transientDesc.width = 1024;
     transientDesc.height = 1024;
@@ -215,11 +658,13 @@ void TestAliasingPlan()
     TestPass passARead("PassARead", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
     {
         builder.ReadTexture(textureA, rhi::RHIResourceState::ShaderResource);
+        builder.WriteTexture(sinkAHandle, rhi::RHIResourceState::RenderTarget);
     });
 
     TestPass passB("PassB", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
     {
         builder.WriteTexture(textureB, rhi::RHIResourceState::RenderTarget);
+        builder.WriteTexture(sinkBHandle, rhi::RHIResourceState::RenderTarget);
     });
 
     graph.AddPass(passA);
@@ -234,9 +679,75 @@ void TestAliasingPlan()
     assert(HasAliasingBarrier(compiledGraph.passes[2].preBarriers, textureA.index, textureB.index));
 }
 
+void TestAliasingRejectsUsageMismatch()
+{
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sinkA(sinkDesc);
+    FakeTexture sinkB(sinkDesc);
+
+    const render::TextureHandle sinkAHandle =
+        graph.ImportTexture(&sinkA, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "SinkA");
+    const render::TextureHandle sinkBHandle =
+        graph.ImportTexture(&sinkB, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "SinkB");
+
+    rhi::RHITextureDesc renderTargetDesc{};
+    renderTargetDesc.width = 1024;
+    renderTargetDesc.height = 1024;
+    renderTargetDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+    renderTargetDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+
+    rhi::RHITextureDesc uavDesc = renderTargetDesc;
+    uavDesc.usage = rhi::RHITextureUsage::UnorderedAccess | rhi::RHITextureUsage::ShaderResource;
+
+    const render::TextureHandle textureA = graph.CreateTransientTexture(renderTargetDesc);
+    const render::TextureHandle textureB = graph.CreateTransientTexture(uavDesc);
+
+    TestPass passA("PassA", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(textureA, rhi::RHIResourceState::RenderTarget);
+    });
+
+    TestPass passARead("PassARead", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.ReadTexture(textureA, rhi::RHIResourceState::ShaderResource);
+        builder.WriteTexture(sinkAHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    TestPass passB("PassB", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.ReadWriteTexture(textureB, rhi::RHIResourceState::UnorderedAccess);
+        builder.WriteTexture(sinkBHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(passA);
+    graph.AddPass(passARead);
+    graph.AddPass(passB);
+    graph.Compile();
+
+    const render::CompiledRenderGraph& compiledGraph = graph.GetCompiledGraph();
+    const auto& resources = compiledGraph.resources;
+    assert(resources[textureA.index].alias.slot != resources[textureB.index].alias.slot);
+    assert(resources[textureB.index].alias.previousResourceIndex == render::kInvalidRenderGraphIndex);
+}
+
 void TestCrossQueueWaits()
 {
     render::RenderGraph graph;
+
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sink(sinkDesc);
+    const render::TextureHandle sinkHandle =
+        graph.ImportTexture(&sink, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "Sink");
 
     rhi::RHIBufferDesc bufferDesc{};
     bufferDesc.sizeBytes = 4096;
@@ -253,6 +764,7 @@ void TestCrossQueueWaits()
     TestPass graphicsPass("GraphicsPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
     {
         builder.ReadBuffer(bufferHandle, rhi::RHIResourceState::ShaderResource);
+        builder.WriteTexture(sinkHandle, rhi::RHIResourceState::RenderTarget);
     });
 
     graph.AddPass(copyPass);
@@ -265,9 +777,136 @@ void TestCrossQueueWaits()
     assert(compiledGraph.queueBatches[1].waitBatchIndices[0] == 0);
 }
 
+void TestFinalBarrierStaysOnLastUsingBatch()
+{
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sink(sinkDesc);
+    const render::TextureHandle sinkHandle =
+        graph.ImportTexture(&sink, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "Sink");
+
+    rhi::RHITextureDesc backBufferDesc{};
+    backBufferDesc.width = 1280;
+    backBufferDesc.height = 720;
+    backBufferDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    backBufferDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::Present;
+    FakeTexture backBuffer(backBufferDesc);
+
+    const render::TextureHandle backBufferHandle =
+        graph.ImportTexture(&backBuffer, rhi::RHIResourceState::Present, rhi::RHIResourceState::Present, "BackBuffer");
+
+    rhi::RHIBufferDesc scratchDesc{};
+    scratchDesc.sizeBytes = 1024;
+    scratchDesc.usage = rhi::RHIBufferUsage::StorageBuffer;
+    const render::BufferHandle scratchBuffer = graph.CreateTransientBuffer(scratchDesc);
+
+    TestPass graphicsPass("GraphicsPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(backBufferHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    TestPass computePass("ComputePass", rhi::RHIQueueType::Compute, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.ReadWriteBuffer(scratchBuffer, rhi::RHIResourceState::UnorderedAccess);
+        builder.WriteTexture(sinkHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(graphicsPass);
+    graph.AddPass(computePass);
+    graph.Compile();
+
+    const render::CompiledRenderGraph& compiledGraph = graph.GetCompiledGraph();
+    assert(compiledGraph.queueBatches.size() == 2);
+    assert(HasTransition(compiledGraph.queueBatches[0].postBarriers, backBufferHandle.index,
+                         rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::Present));
+    assert(!HasTransition(compiledGraph.queueBatches[1].postBarriers, backBufferHandle.index,
+                          rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::Present));
+    assert(compiledGraph.queueBatches[1].waitBatchIndices.size() == 1);
+    assert(compiledGraph.queueBatches[1].waitBatchIndices[0] == 0);
+}
+
+void TestDeadPassCullingRemovesUnusedBranch()
+{
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc backBufferDesc{};
+    backBufferDesc.width = 1280;
+    backBufferDesc.height = 720;
+    backBufferDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    backBufferDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::Present;
+    FakeTexture backBuffer(backBufferDesc);
+
+    const render::TextureHandle backBufferHandle =
+        graph.ImportTexture(&backBuffer, rhi::RHIResourceState::Present, rhi::RHIResourceState::Present, "BackBuffer");
+
+    rhi::RHITextureDesc scratchDesc{};
+    scratchDesc.width = 256;
+    scratchDesc.height = 256;
+    scratchDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+    scratchDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+
+    const render::TextureHandle deadTexture = graph.CreateTransientTexture(scratchDesc);
+
+    TestPass deadPass("DeadPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(deadTexture, rhi::RHIResourceState::RenderTarget);
+    });
+
+    TestPass presentPass("PresentPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(backBufferHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(deadPass);
+    graph.AddPass(presentPass);
+    graph.Compile();
+
+    const render::CompiledRenderGraph& compiledGraph = graph.GetCompiledGraph();
+    assert(compiledGraph.passes.size() == 1);
+    assert(compiledGraph.passes[0].originalPassIndex == 1);
+    assert(!compiledGraph.resources[deadTexture.index].lifetime.IsValid());
+}
+
+void TestDeadPassCullingKeepsSideEffectPass()
+{
+    render::RenderGraph graph;
+
+    rhi::RHIBufferDesc scratchDesc{};
+    scratchDesc.sizeBytes = 1024;
+    scratchDesc.usage = rhi::RHIBufferUsage::StorageBuffer;
+    const render::BufferHandle scratchBuffer = graph.CreateTransientBuffer(scratchDesc);
+
+    TestPass sideEffectPass("GPUCapturePass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteBuffer(scratchBuffer, rhi::RHIResourceState::UnorderedAccess);
+    }, true);
+
+    graph.AddPass(sideEffectPass);
+    graph.Compile();
+
+    const render::CompiledRenderGraph& compiledGraph = graph.GetCompiledGraph();
+    assert(compiledGraph.passes.size() == 1);
+    assert(compiledGraph.passes[0].originalPassIndex == 0);
+    assert(compiledGraph.resources[scratchBuffer.index].lifetime.IsValid());
+}
+
 void TestUAVBarrier()
 {
     render::RenderGraph graph;
+
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sink(sinkDesc);
+    const render::TextureHandle sinkHandle =
+        graph.ImportTexture(&sink, rhi::RHIResourceState::RenderTarget, rhi::RHIResourceState::RenderTarget, "Sink");
 
     rhi::RHIBufferDesc bufferDesc{};
     bufferDesc.sizeBytes = 1024;
@@ -284,6 +923,7 @@ void TestUAVBarrier()
     TestPass secondWrite("SecondWrite", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
     {
         builder.WriteBuffer(bufferHandle, rhi::RHIResourceState::UnorderedAccess);
+        builder.WriteTexture(sinkHandle, rhi::RHIResourceState::RenderTarget);
     });
 
     graph.AddPass(firstWrite);
@@ -294,15 +934,168 @@ void TestUAVBarrier()
     assert(HasUAVBarrier(compiledGraph.passes[1].preBarriers, bufferHandle.index));
 }
 
+void TestDeadPassCullingSkipsUnusedTransientAllocation()
+{
+    FakeDevice device;
+    render::TransientResourcePool pool;
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc backBufferDesc{};
+    backBufferDesc.width = 1280;
+    backBufferDesc.height = 720;
+    backBufferDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    backBufferDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::Present;
+    FakeTexture backBuffer(backBufferDesc);
+
+    const render::TextureHandle backBufferHandle =
+        graph.ImportTexture(&backBuffer, rhi::RHIResourceState::Present, rhi::RHIResourceState::Present, "BackBuffer");
+
+    rhi::RHITextureDesc deadDesc{};
+    deadDesc.width = 512;
+    deadDesc.height = 512;
+    deadDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+    deadDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+    const render::TextureHandle deadTexture = graph.CreateTransientTexture(deadDesc);
+
+    TestPass deadPass("DeadPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(deadTexture, rhi::RHIResourceState::RenderTarget);
+    });
+
+    TestPass presentPass("PresentPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(backBufferHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(deadPass);
+    graph.AddPass(presentPass);
+    graph.Compile();
+
+    pool.Prepare(device, graph.GetCompiledGraph());
+    assert(device.transientTextureCreateCount == 0);
+}
+
+void TestExecuteBatchesBarrierSubmission()
+{
+    ExecuteFakeDevice device;
+    FakeFence fence;
+    render::TransientResourcePool pool;
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc colorADesc{};
+    colorADesc.width = 640;
+    colorADesc.height = 480;
+    colorADesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+    colorADesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+    FakeTexture colorA(colorADesc);
+
+    rhi::RHITextureDesc colorBDesc = colorADesc;
+    colorBDesc.debugName = "ColorB";
+    FakeTexture colorB(colorBDesc);
+
+    const render::TextureHandle colorAHandle =
+        graph.ImportTexture(&colorA, rhi::RHIResourceState::ShaderResource,
+                            rhi::RHIResourceState::ShaderResource, "ColorA");
+    const render::TextureHandle colorBHandle =
+        graph.ImportTexture(&colorB, rhi::RHIResourceState::ShaderResource,
+                            rhi::RHIResourceState::ShaderResource, "ColorB");
+
+    TestPass pass("Composite", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(colorAHandle, rhi::RHIResourceState::RenderTarget);
+        builder.WriteTexture(colorBHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(pass);
+
+    render::RenderGraph::ExecuteDesc executeDesc{
+        .device = device,
+        .timelineFence = fence,
+        .transientResourcePool = pool,
+    };
+
+    const uint64_t signalValue = graph.Execute(executeDesc);
+
+    assert(device.lastCommandList != nullptr);
+    assert(signalValue == 1);
+    assert(device.lastCommandList->singleBarrierCalls == 0);
+    assert(device.lastCommandList->barrierBatchSizes.size() == 2);
+    assert(device.lastCommandList->barrierBatchSizes[0] == 2);
+    assert(device.lastCommandList->barrierBatchSizes[1] == 2);
+    assert(device.graphicsQueue.submitCount == 1);
+    assert(device.graphicsQueue.lastSubmitCommandListCount == 1);
+}
+
+void TestTransientPoolRecreatesOnAliasSlotChange()
+{
+    FakeDevice device;
+    render::TransientResourcePool pool;
+    render::CompiledRenderGraph compiledGraph;
+
+    compiledGraph.resources.resize(1);
+    render::RenderGraphResourceInfo& resource = compiledGraph.resources[0];
+    resource.kind = render::ResourceKind::Texture;
+    resource.imported = false;
+    resource.textureDesc.width = 512;
+    resource.textureDesc.height = 512;
+    resource.textureDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+    resource.textureDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+    resource.lifetime.firstUsePass = 0;
+    resource.lifetime.lastUsePass = 0;
+    resource.alias.slot = 0;
+
+    pool.Prepare(device, compiledGraph);
+    assert(device.transientTextureCreateCount == 1);
+    assert(device.observedAliasSlots.back() == 0);
+
+    pool.Prepare(device, compiledGraph);
+    assert(device.transientTextureCreateCount == 1);
+
+    compiledGraph.resources[0].alias.slot = 1;
+    pool.Prepare(device, compiledGraph);
+    assert(device.transientTextureCreateCount == 2);
+    assert(device.observedAliasSlots.back() == 1);
+}
+
+void TestCommandListPoolReusesCompletedLists()
+{
+    PoolFakeDevice device;
+    render::CommandListPool pool;
+
+    render::CommandListPool::Lease first = pool.Acquire(device, rhi::RHIQueueType::Graphics, 0);
+    assert(first.IsValid());
+    assert(device.createCommandListCount == 1);
+    pool.Release(first, 3);
+
+    render::CommandListPool::Lease second = pool.Acquire(device, rhi::RHIQueueType::Graphics, 2);
+    assert(second.IsValid());
+    assert(device.createCommandListCount == 2);
+    pool.Release(second, 4);
+
+    render::CommandListPool::Lease third = pool.Acquire(device, rhi::RHIQueueType::Graphics, 3);
+    assert(third.IsValid());
+    assert(device.createCommandListCount == 2);
+    pool.Release(third, 5);
+}
+
 } // namespace
 
 int main()
 {
     TestImportedBackBufferTransitions();
+    TestImportedStateRefreshUpdatesCompiledBarriers();
     TestSceneColorTransition();
     TestAliasingPlan();
+    TestAliasingRejectsUsageMismatch();
     TestCrossQueueWaits();
+    TestFinalBarrierStaysOnLastUsingBatch();
+    TestDeadPassCullingRemovesUnusedBranch();
+    TestDeadPassCullingKeepsSideEffectPass();
     TestUAVBarrier();
+    TestDeadPassCullingSkipsUnusedTransientAllocation();
+    TestExecuteBatchesBarrierSubmission();
+    TestTransientPoolRecreatesOnAliasSlotChange();
+    TestCommandListPoolReusesCompletedLists();
 
     std::cout << "Render Graph compile tests passed\n";
     return 0;

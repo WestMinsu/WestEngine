@@ -106,6 +106,7 @@ struct ResourceStateTracker
            lhsDesc.height == rhsDesc.height &&
            lhsDesc.depth == rhsDesc.depth &&
            lhsDesc.mipLevels == rhsDesc.mipLevels &&
+           lhsDesc.usage == rhsDesc.usage &&
            lhsDesc.arrayLayers == rhsDesc.arrayLayers;
 }
 
@@ -219,6 +220,85 @@ struct ResourceStateTracker
 
     WEST_ASSERT(sortedOrder.size() == passNodes.size());
     return sortedOrder;
+}
+
+[[nodiscard]] bool WritesImportedResource(const RenderGraphPassNode& passNode,
+                                          std::span<const RenderGraphResourceInfo> resources)
+{
+    for (const ResourceUse& use : passNode.uses)
+    {
+        if (use.resourceIndex >= resources.size())
+        {
+            continue;
+        }
+
+        if (resources[use.resourceIndex].imported && IsWriteAccess(use.accessType))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+[[nodiscard]] std::vector<uint32_t> CullDeadPasses(std::span<const RenderGraphPassNode> passNodes,
+                                                   std::span<const RenderGraphResourceInfo> resources,
+                                                   std::span<const std::vector<uint32_t>> outgoing,
+                                                   std::span<const uint32_t> sortedPassIndices)
+{
+    std::vector<std::vector<uint32_t>> incoming(passNodes.size());
+    for (uint32_t sourcePassIndex = 0; sourcePassIndex < outgoing.size(); ++sourcePassIndex)
+    {
+        for (uint32_t destinationPassIndex : outgoing[sourcePassIndex])
+        {
+            incoming[destinationPassIndex].push_back(sourcePassIndex);
+        }
+    }
+
+    std::vector<bool> livePassMask(passNodes.size(), false);
+    std::vector<uint32_t> stack;
+
+    for (uint32_t passIndex = 0; passIndex < passNodes.size(); ++passIndex)
+    {
+        const bool isRootPass = passNodes[passIndex].pass->HasSideEffects() ||
+                                WritesImportedResource(passNodes[passIndex], resources);
+        if (!isRootPass)
+        {
+            continue;
+        }
+
+        livePassMask[passIndex] = true;
+        stack.push_back(passIndex);
+    }
+
+    while (!stack.empty())
+    {
+        const uint32_t passIndex = stack.back();
+        stack.pop_back();
+
+        for (uint32_t producerPassIndex : incoming[passIndex])
+        {
+            if (livePassMask[producerPassIndex])
+            {
+                continue;
+            }
+
+            livePassMask[producerPassIndex] = true;
+            stack.push_back(producerPassIndex);
+        }
+    }
+
+    std::vector<uint32_t> liveSortedPassIndices;
+    liveSortedPassIndices.reserve(sortedPassIndices.size());
+    for (uint32_t passIndex : sortedPassIndices)
+    {
+        if (livePassMask[passIndex])
+        {
+            liveSortedPassIndices.push_back(passIndex);
+        }
+    }
+
+    return liveSortedPassIndices;
 }
 
 void AssignResourceLifetimes(const std::vector<CompiledPassInfo>& passes, std::vector<RenderGraphResourceInfo>& resources)
@@ -395,40 +475,64 @@ uint64_t ComputePeakWithAliasing(const std::vector<RenderGraphResourceInfo>& res
     return peakBytes;
 }
 
-} // namespace
-
-CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPassNode> passNodes,
-                                                 std::vector<RenderGraphResourceInfo> resources)
+[[nodiscard]] std::vector<uint32_t> BuildPassToBatchMap(std::span<const QueueBatchInfo> queueBatches, uint32_t passCount)
 {
-    CompiledRenderGraph compiledGraph{};
-
-    std::vector<std::vector<uint32_t>> outgoing;
-    compiledGraph.sortedPassIndices = BuildStableTopologicalOrder(passNodes, outgoing);
-    compiledGraph.passes.reserve(compiledGraph.sortedPassIndices.size());
-
-    for (uint32_t originalPassIndex : compiledGraph.sortedPassIndices)
+    std::vector<uint32_t> passToBatch(passCount, 0);
+    for (uint32_t batchIndex = 0; batchIndex < queueBatches.size(); ++batchIndex)
     {
-        CompiledPassInfo compiledPass{};
-        compiledPass.pass = passNodes[originalPassIndex].pass;
-        compiledPass.originalPassIndex = originalPassIndex;
-        compiledPass.uses = passNodes[originalPassIndex].uses;
-        compiledGraph.passes.push_back(std::move(compiledPass));
+        const QueueBatchInfo& batch = queueBatches[batchIndex];
+        for (uint32_t passIndex = batch.beginPass; passIndex <= batch.endPass; ++passIndex)
+        {
+            passToBatch[passIndex] = batchIndex;
+        }
     }
 
-    AssignResourceLifetimes(compiledGraph.passes, resources);
-    AssignAliasSlots(resources);
+    return passToBatch;
+}
 
-    std::vector<ResourceStateTracker> stateTrackers(resources.size());
-    for (uint32_t resourceIndex = 0; resourceIndex < resources.size(); ++resourceIndex)
+void EnsureTerminalBatchWaitsForAllPriorBatches(std::vector<QueueBatchInfo>& queueBatches)
+{
+    if (queueBatches.size() < 2)
     {
-        stateTrackers[resourceIndex].state = resources[resourceIndex].imported
-                                                 ? resources[resourceIndex].initialState
+        return;
+    }
+
+    QueueBatchInfo& terminalBatch = queueBatches.back();
+    for (uint32_t batchIndex = 0; batchIndex + 1 < queueBatches.size(); ++batchIndex)
+    {
+        if (std::find(terminalBatch.waitBatchIndices.begin(), terminalBatch.waitBatchIndices.end(), batchIndex) ==
+            terminalBatch.waitBatchIndices.end())
+        {
+            terminalBatch.waitBatchIndices.push_back(batchIndex);
+        }
+    }
+}
+
+} // namespace
+
+void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
+{
+    for (CompiledPassInfo& pass : compiledGraph.passes)
+    {
+        pass.preBarriers.clear();
+    }
+    for (QueueBatchInfo& batch : compiledGraph.queueBatches)
+    {
+        batch.postBarriers.clear();
+    }
+    compiledGraph.finalBarriers.clear();
+
+    std::vector<ResourceStateTracker> stateTrackers(compiledGraph.resources.size());
+    for (uint32_t resourceIndex = 0; resourceIndex < compiledGraph.resources.size(); ++resourceIndex)
+    {
+        stateTrackers[resourceIndex].state = compiledGraph.resources[resourceIndex].imported
+                                                 ? compiledGraph.resources[resourceIndex].initialState
                                                  : rhi::RHIResourceState::Undefined;
     }
 
-    for (uint32_t resourceIndex = 0; resourceIndex < resources.size(); ++resourceIndex)
+    for (uint32_t resourceIndex = 0; resourceIndex < compiledGraph.resources.size(); ++resourceIndex)
     {
-        const RenderGraphResourceInfo& resource = resources[resourceIndex];
+        const RenderGraphResourceInfo& resource = compiledGraph.resources[resourceIndex];
         if (resource.alias.previousResourceIndex == kInvalidRenderGraphIndex || !resource.lifetime.IsValid())
         {
             continue;
@@ -474,9 +578,17 @@ CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPass
         }
     }
 
-    for (uint32_t resourceIndex = 0; resourceIndex < resources.size(); ++resourceIndex)
+    if (compiledGraph.queueBatches.empty())
     {
-        const RenderGraphResourceInfo& resource = resources[resourceIndex];
+        return;
+    }
+
+    const std::vector<uint32_t> passToBatch =
+        BuildPassToBatchMap(compiledGraph.queueBatches, static_cast<uint32_t>(compiledGraph.passes.size()));
+
+    for (uint32_t resourceIndex = 0; resourceIndex < compiledGraph.resources.size(); ++resourceIndex)
+    {
+        const RenderGraphResourceInfo& resource = compiledGraph.resources[resourceIndex];
         if (!resource.imported || !resource.lifetime.IsValid())
         {
             continue;
@@ -493,8 +605,34 @@ CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPass
         barrier.resourceIndex = resourceIndex;
         barrier.stateBefore = stateTrackers[resourceIndex].state;
         barrier.stateAfter = resource.finalState;
+        const uint32_t batchIndex = passToBatch[resource.lifetime.lastUsePass];
+        compiledGraph.queueBatches[batchIndex].postBarriers.push_back(barrier);
         compiledGraph.finalBarriers.push_back(barrier);
     }
+}
+
+CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPassNode> passNodes,
+                                                 std::vector<RenderGraphResourceInfo> resources)
+{
+    CompiledRenderGraph compiledGraph{};
+
+    std::vector<std::vector<uint32_t>> outgoing;
+    compiledGraph.sortedPassIndices = BuildStableTopologicalOrder(passNodes, outgoing);
+    compiledGraph.sortedPassIndices =
+        CullDeadPasses(passNodes, resources, outgoing, compiledGraph.sortedPassIndices);
+    compiledGraph.passes.reserve(compiledGraph.sortedPassIndices.size());
+
+    for (uint32_t originalPassIndex : compiledGraph.sortedPassIndices)
+    {
+        CompiledPassInfo compiledPass{};
+        compiledPass.pass = passNodes[originalPassIndex].pass;
+        compiledPass.originalPassIndex = originalPassIndex;
+        compiledPass.uses = passNodes[originalPassIndex].uses;
+        compiledGraph.passes.push_back(std::move(compiledPass));
+    }
+
+    AssignResourceLifetimes(compiledGraph.passes, resources);
+    AssignAliasSlots(resources);
 
     if (!compiledGraph.passes.empty())
     {
@@ -521,17 +659,10 @@ CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPass
         compiledGraph.queueBatches.push_back(std::move(currentBatch));
     }
 
-    std::vector<uint32_t> passToBatch(compiledGraph.passes.size(), 0);
-    for (uint32_t batchIndex = 0; batchIndex < compiledGraph.queueBatches.size(); ++batchIndex)
-    {
-        const QueueBatchInfo& batch = compiledGraph.queueBatches[batchIndex];
-        for (uint32_t passIndex = batch.beginPass; passIndex <= batch.endPass; ++passIndex)
-        {
-            passToBatch[passIndex] = batchIndex;
-        }
-    }
+    const std::vector<uint32_t> passToBatch =
+        BuildPassToBatchMap(compiledGraph.queueBatches, static_cast<uint32_t>(compiledGraph.passes.size()));
 
-    std::vector<uint32_t> originalPassToCompiledIndex(passNodes.size(), 0);
+    std::vector<uint32_t> originalPassToCompiledIndex(passNodes.size(), kInvalidRenderGraphIndex);
     for (uint32_t passIndex = 0; passIndex < compiledGraph.sortedPassIndices.size(); ++passIndex)
     {
         originalPassToCompiledIndex[compiledGraph.sortedPassIndices[passIndex]] = passIndex;
@@ -540,9 +671,19 @@ CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPass
     for (uint32_t originalSourceIndex = 0; originalSourceIndex < outgoing.size(); ++originalSourceIndex)
     {
         const uint32_t compiledSourceIndex = originalPassToCompiledIndex[originalSourceIndex];
+        if (compiledSourceIndex == kInvalidRenderGraphIndex)
+        {
+            continue;
+        }
+
         for (uint32_t originalDestinationIndex : outgoing[originalSourceIndex])
         {
             const uint32_t compiledDestinationIndex = originalPassToCompiledIndex[originalDestinationIndex];
+            if (compiledDestinationIndex == kInvalidRenderGraphIndex)
+            {
+                continue;
+            }
+
             const uint32_t sourceBatchIndex = passToBatch[compiledSourceIndex];
             const uint32_t destinationBatchIndex = passToBatch[compiledDestinationIndex];
             if (sourceBatchIndex == destinationBatchIndex)
@@ -558,6 +699,8 @@ CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPass
         }
     }
 
+    EnsureTerminalBatchWaitsForAllPriorBatches(compiledGraph.queueBatches);
+
     compiledGraph.peakBytesWithoutAliasing =
         ComputePeakWithoutAliasing(resources, static_cast<uint32_t>(compiledGraph.passes.size()));
     compiledGraph.peakBytesWithAliasing =
@@ -568,6 +711,7 @@ CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPass
             : 0;
 
     compiledGraph.resources = std::move(resources);
+    RefreshBarriers(compiledGraph);
     return compiledGraph;
 }
 

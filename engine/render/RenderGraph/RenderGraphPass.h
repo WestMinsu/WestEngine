@@ -20,6 +20,10 @@ public:
 
     virtual void Setup(RenderGraphBuilder& builder) = 0;
     virtual void Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList) = 0;
+    [[nodiscard]] virtual bool HasSideEffects() const
+    {
+        return false;
+    }
     [[nodiscard]] virtual rhi::RHIQueueType GetQueueType() const = 0;
     [[nodiscard]] virtual const char* GetDebugName() const = 0;
 };

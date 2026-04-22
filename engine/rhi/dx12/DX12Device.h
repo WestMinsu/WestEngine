@@ -11,6 +11,12 @@
 
 #include <mutex>
 #include <utility>
+#include <vector>
+
+namespace D3D12MA
+{
+class Allocation;
+}
 
 namespace west::rhi
 {
@@ -104,6 +110,13 @@ public:
     }
 
 private:
+    struct TransientTextureAliasEntry
+    {
+        RHITextureDesc desc{};
+        std::weak_ptr<D3D12MA::Allocation> allocation;
+        bool valid = false;
+    };
+
     [[nodiscard]] bool EnableDebugLayer(bool enableGBV);
     void EnableDRED();
     void SelectAdapter(uint32_t preferredIndex);
@@ -126,6 +139,8 @@ private:
     std::unique_ptr<DX12Queue> m_computeQueue;
     std::unique_ptr<DX12Queue> m_copyQueue;
     std::unique_ptr<DX12MemoryAllocator> m_memoryAllocator;
+    std::vector<TransientTextureAliasEntry> m_transientTextureAliases;
+    std::mutex m_transientTextureMutex;
 
     static constexpr uint32_t kBindlessCapacity = 4096;
     ComPtr<ID3D12DescriptorHeap> m_resourceDescriptorHeap;

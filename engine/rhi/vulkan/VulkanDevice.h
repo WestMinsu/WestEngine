@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -102,6 +103,13 @@ public:
     {
         return m_graphicsQueueFamily;
     }
+    uint32_t GetQueueFamily(RHIQueueType type) const;
+    std::span<const uint32_t> GetActiveQueueFamilies() const
+    {
+        return std::span<const uint32_t>(m_activeQueueFamilies.data(), m_activeQueueFamilies.size());
+    }
+    void ConfigureQueueSharing(VkBufferCreateInfo& bufferInfo) const;
+    void ConfigureQueueSharing(VkImageCreateInfo& imageInfo) const;
 
     // ── Memory Management ─────────────────────────────────────────────
     void EnqueueDeferredDeletion(std::function<void()> deleter, uint64_t fenceValue) override
@@ -126,6 +134,13 @@ public:
     }
 
 private:
+    struct TransientTextureAliasEntry
+    {
+        RHITextureDesc desc{};
+        std::weak_ptr<VmaAllocation_T> allocation;
+        bool valid = false;
+    };
+
     enum class BindlessDescriptorKind : uint8_t
     {
         None,
@@ -150,11 +165,19 @@ private:
     VkDevice m_device = VK_NULL_HANDLE;
 
     uint32_t m_graphicsQueueFamily = UINT32_MAX;
+    uint32_t m_computeQueueFamily = UINT32_MAX;
+    uint32_t m_copyQueueFamily = UINT32_MAX;
+    uint32_t m_graphicsQueueIndex = 0;
+    uint32_t m_computeQueueIndex = 0;
+    uint32_t m_copyQueueIndex = 0;
+    std::vector<uint32_t> m_activeQueueFamilies;
 
     std::unique_ptr<VulkanQueue> m_graphicsQueue;
     std::unique_ptr<VulkanQueue> m_computeQueue;
     std::unique_ptr<VulkanQueue> m_copyQueue;
     std::unique_ptr<VulkanMemoryAllocator> m_memoryAllocator;
+    std::vector<TransientTextureAliasEntry> m_transientTextureAliases;
+    std::mutex m_transientTextureMutex;
 
     static constexpr uint32_t kBindlessCapacity = 4096;
     uint32_t m_bindlessCapacity = 0;

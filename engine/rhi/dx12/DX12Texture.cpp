@@ -11,42 +11,11 @@
 namespace west::rhi
 {
 
-DX12Texture::~DX12Texture()
+namespace
 {
-    if (m_allocation && m_ownsResource)
-    {
-        D3D12MA::Allocation* allocation = m_allocation;
-        if (m_device)
-        {
-            m_device->EnqueueDeferredDeletion(
-                [allocation]() {
-                    allocation->Release();
-                },
-                m_device->GetCurrentFrameFenceValue());
-        }
-        else
-        {
-            allocation->Release();
-        }
-    }
 
-    m_allocation = nullptr;
-    m_resource = nullptr;
-}
-
-void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
+[[nodiscard]] D3D12_RESOURCE_DESC BuildResourceDesc(const RHITextureDesc& desc)
 {
-    WEST_ASSERT(device != nullptr);
-    WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
-    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
-
-    DX12MemoryAllocator* allocator = device->GetMemoryAllocator();
-    WEST_ASSERT(allocator != nullptr);
-
-    m_device = device;
-    m_desc = desc;
-    m_ownsResource = true;
-
     D3D12_RESOURCE_DESC resourceDesc{};
     resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     resourceDesc.Alignment = 0;
@@ -73,6 +42,108 @@ void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
         resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     }
 
+    return resourceDesc;
+}
+
+void SetDebugName(ID3D12Resource* resource, const char* debugName)
+{
+    if (!resource || !debugName)
+    {
+        return;
+    }
+
+    wchar_t wideName[128]{};
+    size_t converted = 0;
+    mbstowcs_s(&converted, wideName, debugName, sizeof(wideName) / sizeof(wchar_t) - 1);
+    resource->SetName(wideName);
+}
+
+void CreateRTVIfNeeded(DX12Device* device, ID3D12Resource* resource, const RHITextureDesc& desc,
+                       ComPtr<ID3D12DescriptorHeap>& rtvHeap, D3D12_CPU_DESCRIPTOR_HANDLE& rtvHandle)
+{
+    if (!device || !resource || !HasFlag(desc.usage, RHITextureUsage::RenderTarget))
+    {
+        return;
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
+    rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtvHeapDesc.NumDescriptors = 1;
+    rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    WEST_HR_CHECK(device->GetD3DDevice()->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap)));
+    rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    device->GetD3DDevice()->CreateRenderTargetView(resource, nullptr, rtvHandle);
+}
+
+} // namespace
+
+DX12Texture::~DX12Texture()
+{
+    if (m_isAliased && m_resource)
+    {
+        ID3D12Resource* resource = m_resource;
+        ComPtr<ID3D12DescriptorHeap> rtvHeap = m_rtvHeap;
+
+        if (m_device)
+        {
+            m_device->EnqueueDeferredDeletion(
+                [resource, rtvHeap]() mutable {
+                    if (resource)
+                    {
+                        resource->Release();
+                    }
+                    rtvHeap.Reset();
+                },
+                m_device->GetCurrentFrameFenceValue());
+        }
+        else
+        {
+            if (resource)
+            {
+                resource->Release();
+            }
+            rtvHeap.Reset();
+        }
+    }
+    else if (m_allocation && m_ownsResource)
+    {
+        D3D12MA::Allocation* allocation = m_allocation;
+        if (m_device)
+        {
+            m_device->EnqueueDeferredDeletion(
+                [allocation]() {
+                    allocation->Release();
+                },
+                m_device->GetCurrentFrameFenceValue());
+        }
+        else
+        {
+            allocation->Release();
+        }
+    }
+
+    m_allocation = nullptr;
+    m_resource = nullptr;
+    m_aliasingAllocation.reset();
+    m_rtvHeap.Reset();
+}
+
+void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
+{
+    WEST_ASSERT(device != nullptr);
+    WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
+    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
+
+    DX12MemoryAllocator* allocator = device->GetMemoryAllocator();
+    WEST_ASSERT(allocator != nullptr);
+
+    m_device = device;
+    m_desc = desc;
+    m_ownsResource = true;
+    m_isAliased = false;
+
+    const D3D12_RESOURCE_DESC resourceDesc = BuildResourceDesc(desc);
+
     D3D12MA::ALLOCATION_DESC allocDesc{};
     allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -85,26 +156,44 @@ void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
         IID_PPV_ARGS(&m_resource));
     WEST_HR_CHECK(hr);
 
-    if (desc.debugName)
-    {
-        wchar_t wideName[128]{};
-        size_t converted = 0;
-        mbstowcs_s(&converted, wideName, desc.debugName, sizeof(wideName) / sizeof(wchar_t) - 1);
-        m_resource->SetName(wideName);
-    }
-
-    if (HasFlag(desc.usage, RHITextureUsage::RenderTarget))
-    {
-        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
-        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtvHeapDesc.NumDescriptors = 1;
-        rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        WEST_HR_CHECK(device->GetD3DDevice()->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_rtvHeap)));
-        m_rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        device->GetD3DDevice()->CreateRenderTargetView(m_resource, nullptr, m_rtvHandle);
-    }
+    SetDebugName(m_resource, desc.debugName);
+    CreateRTVIfNeeded(device, m_resource, desc, m_rtvHeap, m_rtvHandle);
 
     WEST_LOG_VERBOSE(LogCategory::RHI, "DX12 Texture created: {} ({}x{})",
+                     desc.debugName ? desc.debugName : "unnamed", desc.width, desc.height);
+}
+
+void DX12Texture::InitializeAliased(DX12Device* device, const RHITextureDesc& desc,
+                                    std::shared_ptr<D3D12MA::Allocation> aliasingAllocation)
+{
+    WEST_ASSERT(device != nullptr);
+    WEST_ASSERT(aliasingAllocation);
+    WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
+    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
+
+    DX12MemoryAllocator* allocator = device->GetMemoryAllocator();
+    WEST_ASSERT(allocator != nullptr);
+
+    m_device = device;
+    m_desc = desc;
+    m_ownsResource = false;
+    m_isAliased = true;
+    m_aliasingAllocation = std::move(aliasingAllocation);
+
+    const D3D12_RESOURCE_DESC resourceDesc = BuildResourceDesc(desc);
+    HRESULT hr = allocator->GetAllocator()->CreateAliasingResource(
+        m_aliasingAllocation.get(),
+        0,
+        &resourceDesc,
+        D3D12_RESOURCE_STATE_COMMON,
+        nullptr,
+        IID_PPV_ARGS(&m_resource));
+    WEST_HR_CHECK(hr);
+
+    SetDebugName(m_resource, desc.debugName);
+    CreateRTVIfNeeded(device, m_resource, desc, m_rtvHeap, m_rtvHandle);
+
+    WEST_LOG_VERBOSE(LogCategory::RHI, "DX12 Aliased Texture created: {} ({}x{})",
                      desc.debugName ? desc.debugName : "unnamed", desc.width, desc.height);
 }
 

@@ -20,7 +20,6 @@ namespace west::render
 
 namespace
 {
-
 [[nodiscard]] rhi::RHIBarrierDesc ResolveBarrier(const CompiledBarrier& barrier,
                                                  std::span<rhi::IRHITexture* const> textures,
                                                  std::span<rhi::IRHIBuffer* const> buffers)
@@ -63,6 +62,26 @@ namespace
     }
 
     return resolvedBarrier;
+}
+
+void RecordResolvedBarriers(rhi::IRHICommandList& commandList, std::span<const CompiledBarrier> compiledBarriers,
+                            std::span<rhi::IRHITexture* const> textures,
+                            std::span<rhi::IRHIBuffer* const> buffers,
+                            std::vector<rhi::RHIBarrierDesc>& resolvedBarriers)
+{
+    if (compiledBarriers.empty())
+    {
+        return;
+    }
+
+    resolvedBarriers.clear();
+    resolvedBarriers.reserve(compiledBarriers.size());
+    for (const CompiledBarrier& barrier : compiledBarriers)
+    {
+        resolvedBarriers.push_back(ResolveBarrier(barrier, textures, buffers));
+    }
+
+    commandList.ResourceBarriers(std::span<const rhi::RHIBarrierDesc>(resolvedBarriers.data(), resolvedBarriers.size()));
 }
 
 } // namespace
@@ -169,6 +188,88 @@ BufferHandle RenderGraph::ImportBuffer(rhi::IRHIBuffer* buffer, rhi::RHIResource
     return BufferHandle{resourceIndex};
 }
 
+void RenderGraph::UpdateImportedTexture(TextureHandle handle, rhi::IRHITexture* texture,
+                                        rhi::RHIResourceState initialState, rhi::RHIResourceState finalState,
+                                        const char* debugName)
+{
+    WEST_ASSERT(handle.IsValid());
+    WEST_ASSERT(texture != nullptr);
+    WEST_ASSERT(handle.index < m_resources.size());
+
+    RenderGraphResourceInfo& resource = m_resources[handle.index];
+    WEST_ASSERT(resource.kind == ResourceKind::Texture);
+    WEST_ASSERT(resource.imported);
+
+    const rhi::RHITextureDesc newDesc = texture->GetDesc();
+    const bool descChanged = resource.textureDesc != newDesc;
+
+    resource.textureDesc = newDesc;
+    resource.importedTexture = texture;
+    resource.initialState = initialState;
+    resource.finalState = finalState;
+    resource.debugName = debugName != nullptr ? debugName : (newDesc.debugName != nullptr ? newDesc.debugName : resource.debugName);
+    resource.estimatedSizeBytes = static_cast<uint64_t>(newDesc.width) * newDesc.height;
+
+    if (descChanged)
+    {
+        m_isCompiled = false;
+        return;
+    }
+
+    if (m_isCompiled && handle.index < m_compiledGraph.resources.size())
+    {
+        RenderGraphResourceInfo& compiledResource = m_compiledGraph.resources[handle.index];
+        compiledResource.textureDesc = resource.textureDesc;
+        compiledResource.importedTexture = resource.importedTexture;
+        compiledResource.initialState = resource.initialState;
+        compiledResource.finalState = resource.finalState;
+        compiledResource.debugName = resource.debugName;
+        compiledResource.estimatedSizeBytes = resource.estimatedSizeBytes;
+        RenderGraphCompiler::RefreshBarriers(m_compiledGraph);
+    }
+}
+
+void RenderGraph::UpdateImportedBuffer(BufferHandle handle, rhi::IRHIBuffer* buffer,
+                                       rhi::RHIResourceState initialState, rhi::RHIResourceState finalState,
+                                       const char* debugName)
+{
+    WEST_ASSERT(handle.IsValid());
+    WEST_ASSERT(buffer != nullptr);
+    WEST_ASSERT(handle.index < m_resources.size());
+
+    RenderGraphResourceInfo& resource = m_resources[handle.index];
+    WEST_ASSERT(resource.kind == ResourceKind::Buffer);
+    WEST_ASSERT(resource.imported);
+
+    const rhi::RHIBufferDesc newDesc = buffer->GetDesc();
+    const bool descChanged = resource.bufferDesc != newDesc;
+
+    resource.bufferDesc = newDesc;
+    resource.importedBuffer = buffer;
+    resource.initialState = initialState;
+    resource.finalState = finalState;
+    resource.debugName = debugName != nullptr ? debugName : (newDesc.debugName != nullptr ? newDesc.debugName : resource.debugName);
+    resource.estimatedSizeBytes = newDesc.sizeBytes;
+
+    if (descChanged)
+    {
+        m_isCompiled = false;
+        return;
+    }
+
+    if (m_isCompiled && handle.index < m_compiledGraph.resources.size())
+    {
+        RenderGraphResourceInfo& compiledResource = m_compiledGraph.resources[handle.index];
+        compiledResource.bufferDesc = resource.bufferDesc;
+        compiledResource.importedBuffer = resource.importedBuffer;
+        compiledResource.initialState = resource.initialState;
+        compiledResource.finalState = resource.finalState;
+        compiledResource.debugName = resource.debugName;
+        compiledResource.estimatedSizeBytes = resource.estimatedSizeBytes;
+        RenderGraphCompiler::RefreshBarriers(m_compiledGraph);
+    }
+}
+
 TextureHandle RenderGraph::CreateTransientTexture(const rhi::RHITextureDesc& desc)
 {
     RenderGraphResourceInfo resource{};
@@ -249,11 +350,28 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
 
     RenderGraphContext context(desc.device, m_compiledGraph, textures, buffers);
     std::vector<uint64_t> batchSignalValues(m_compiledGraph.queueBatches.size(), 0);
+    std::vector<rhi::RHIBarrierDesc> resolvedBarriers;
 
     for (uint32_t batchIndex = 0; batchIndex < m_compiledGraph.queueBatches.size(); ++batchIndex)
     {
         const QueueBatchInfo& batch = m_compiledGraph.queueBatches[batchIndex];
-        std::unique_ptr<rhi::IRHICommandList> commandList = desc.device.CreateCommandList(batch.queueType);
+        std::unique_ptr<rhi::IRHICommandList> ownedCommandList;
+        CommandListPool::Lease pooledLease{};
+        rhi::IRHICommandList* commandList = nullptr;
+
+        if (desc.commandListPool)
+        {
+            pooledLease = desc.commandListPool->Acquire(desc.device, batch.queueType,
+                                                        desc.timelineFence.GetCompletedValue());
+            commandList = pooledLease.commandList;
+        }
+        else
+        {
+            ownedCommandList = desc.device.CreateCommandList(batch.queueType);
+            WEST_ASSERT(ownedCommandList != nullptr);
+            commandList = ownedCommandList.get();
+        }
+
         WEST_ASSERT(commandList != nullptr);
 
         commandList->Reset();
@@ -262,28 +380,19 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
         for (uint32_t passIndex = batch.beginPass; passIndex <= batch.endPass; ++passIndex)
         {
             const CompiledPassInfo& pass = m_compiledGraph.passes[passIndex];
-            for (const CompiledBarrier& barrier : pass.preBarriers)
-            {
-                commandList->ResourceBarrier(ResolveBarrier(barrier, textures, buffers));
-            }
+            RecordResolvedBarriers(*commandList, pass.preBarriers, textures, buffers, resolvedBarriers);
 
             pass.pass->Execute(context, *commandList);
         }
 
-        if (batchIndex + 1 == m_compiledGraph.queueBatches.size())
-        {
-            for (const CompiledBarrier& barrier : m_compiledGraph.finalBarriers)
-            {
-                commandList->ResourceBarrier(ResolveBarrier(barrier, textures, buffers));
-            }
-        }
+        RecordResolvedBarriers(*commandList, batch.postBarriers, textures, buffers, resolvedBarriers);
 
         commandList->End();
 
         const uint64_t signalValue = desc.timelineFence.AdvanceValue();
         batchSignalValues[batchIndex] = signalValue;
 
-        std::vector<rhi::IRHICommandList*> commandLists = {commandList.get()};
+        std::vector<rhi::IRHICommandList*> commandLists = {commandList};
         std::vector<rhi::RHITimelineWaitDesc> timelineWaits;
         timelineWaits.reserve(batch.waitBatchIndices.size());
         for (uint32_t producerBatchIndex : batch.waitBatchIndices)
@@ -306,15 +415,22 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
 
         desc.device.GetQueue(batch.queueType)->Submit(submitInfo);
 
-        auto retainedCommandList =
-            std::shared_ptr<rhi::IRHICommandList>(commandList.release(), [](rhi::IRHICommandList* ptr)
-            {
-                delete ptr;
-            });
-        desc.device.EnqueueDeferredDeletion([retainedCommandList]() mutable
+        if (desc.commandListPool)
         {
-            retainedCommandList.reset();
-        }, signalValue);
+            desc.commandListPool->Release(pooledLease, signalValue);
+        }
+        else
+        {
+            auto retainedCommandList =
+                std::shared_ptr<rhi::IRHICommandList>(ownedCommandList.release(), [](rhi::IRHICommandList* ptr)
+                {
+                    delete ptr;
+                });
+            desc.device.EnqueueDeferredDeletion([retainedCommandList]() mutable
+            {
+                retainedCommandList.reset();
+            }, signalValue);
+        }
     }
 
     return batchSignalValues.empty() ? 0 : batchSignalValues.back();

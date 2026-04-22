@@ -7,6 +7,7 @@
 #include "core/Timer.h"
 #include "platform/IApplication.h"
 #include "platform/win32/Win32Window.h"
+#include "render/RenderGraph/RenderGraphResource.h"
 #include "rhi/interface/RHIEnums.h"
 
 #include <memory>
@@ -32,7 +33,9 @@ class PSOCache;
 
 namespace west::render
 {
+class CommandListPool;
 class ForwardTexturedQuadPass;
+class RenderGraph;
 class ToneMappingPass;
 class TransientResourcePool;
 } // namespace west::render
@@ -64,6 +67,7 @@ private:
     void ShutdownRHI();
     void RenderFrame();
     void ResizeSwapChain(uint32 width, uint32 height);
+    void EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIResourceState initialState);
 
     // ── Platform ──────────────────────────────────────────────────────
     std::unique_ptr<Win32Window> m_window;
@@ -97,9 +101,16 @@ private:
     std::unique_ptr<rhi::IRHITexture> m_checkerTexture;
     std::unique_ptr<rhi::IRHISampler> m_checkerSampler;
     std::unique_ptr<shader::PSOCache> m_psoCache;
+    std::unique_ptr<render::CommandListPool> m_commandListPool;
+    std::unique_ptr<render::RenderGraph> m_frameGraph;
     std::unique_ptr<render::TransientResourcePool> m_transientResourcePool;
     std::unique_ptr<render::ForwardTexturedQuadPass> m_forwardTexturedQuadPass;
     std::unique_ptr<render::ToneMappingPass> m_toneMappingPass;
+    render::TextureHandle m_frameBackBufferHandle{};
+    render::TextureHandle m_frameSceneColorHandle{};
+    uint32 m_frameGraphWidth = 0;
+    uint32 m_frameGraphHeight = 0;
+    rhi::RHIFormat m_frameGraphBackBufferFormat = rhi::RHIFormat::Unknown;
 };
 
 } // namespace west

@@ -38,6 +38,7 @@ struct QueueBatchInfo
     uint32_t beginPass = 0;
     uint32_t endPass = 0;
     std::vector<uint32_t> waitBatchIndices;
+    std::vector<CompiledBarrier> postBarriers;
 };
 
 struct CompiledRenderGraph
@@ -57,6 +58,7 @@ class RenderGraphCompiler
 public:
     [[nodiscard]] static CompiledRenderGraph Compile(std::span<const RenderGraphPassNode> passNodes,
                                                      std::vector<RenderGraphResourceInfo> resources);
+    static void RefreshBarriers(CompiledRenderGraph& compiledGraph);
 };
 
 } // namespace west::render

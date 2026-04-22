@@ -22,6 +22,7 @@
 
 #include <d3d12sdklayers.h>
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,44 @@ namespace west::rhi
 
 namespace
 {
+
+[[nodiscard]] D3D12_RESOURCE_DESC BuildTextureResourceDesc(const RHITextureDesc& desc)
+{
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resourceDesc.Alignment = 0;
+    resourceDesc.Width = desc.width;
+    resourceDesc.Height = desc.height;
+    resourceDesc.DepthOrArraySize = static_cast<UINT16>(desc.arrayLayers);
+    resourceDesc.MipLevels = static_cast<UINT16>(desc.mipLevels);
+    resourceDesc.Format = static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.SampleDesc.Quality = 0;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    if (HasFlag(desc.usage, RHITextureUsage::RenderTarget))
+    {
+        resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    }
+    if (HasFlag(desc.usage, RHITextureUsage::UnorderedAccess))
+    {
+        resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    }
+    if (HasFlag(desc.usage, RHITextureUsage::DepthStencil))
+    {
+        resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    }
+
+    return resourceDesc;
+}
+
+[[nodiscard]] D3D12_HEAP_FLAGS GetTransientTextureHeapFlags(const RHITextureDesc& desc)
+{
+    return HasFlag(desc.usage, RHITextureUsage::RenderTarget) || HasFlag(desc.usage, RHITextureUsage::DepthStencil)
+               ? D3D12_HEAP_FLAG_ALLOW_ONLY_RT_DS_TEXTURES
+               : D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+}
 
 void LogD3D12InfoQueueMessages(ID3D12Device* device, const char* context)
 {
@@ -545,9 +584,70 @@ std::unique_ptr<IRHIBuffer> DX12Device::CreateTransientBuffer(const RHIBufferDes
     return CreateBuffer(desc);
 }
 
-std::unique_ptr<IRHITexture> DX12Device::CreateTransientTexture(const RHITextureDesc& desc, uint32_t /*aliasSlot*/)
+std::unique_ptr<IRHITexture> DX12Device::CreateTransientTexture(const RHITextureDesc& desc, uint32_t aliasSlot)
 {
-    return CreateTexture(desc);
+    if (aliasSlot == UINT32_MAX)
+    {
+        return CreateTexture(desc);
+    }
+
+    std::shared_ptr<D3D12MA::Allocation> aliasingAllocation;
+    {
+        std::lock_guard<std::mutex> lock(m_transientTextureMutex);
+
+        if (aliasSlot >= m_transientTextureAliases.size())
+        {
+            m_transientTextureAliases.resize(aliasSlot + 1);
+        }
+
+        TransientTextureAliasEntry& entry = m_transientTextureAliases[aliasSlot];
+        aliasingAllocation = entry.allocation.lock();
+
+        if (!aliasingAllocation || !entry.valid || entry.desc != desc)
+        {
+            const D3D12_RESOURCE_DESC resourceDesc = BuildTextureResourceDesc(desc);
+            const D3D12_RESOURCE_ALLOCATION_INFO allocationInfo =
+                m_device->GetResourceAllocationInfo(0, 1, &resourceDesc);
+
+            D3D12MA::ALLOCATION_DESC allocDesc{};
+            allocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+            allocDesc.ExtraHeapFlags = GetTransientTextureHeapFlags(desc);
+
+            D3D12MA::Allocation* allocation = nullptr;
+            HRESULT hr = m_memoryAllocator->GetAllocator()->AllocateMemory(&allocDesc, &allocationInfo, &allocation);
+            WEST_HR_CHECK(hr);
+
+            aliasingAllocation = std::shared_ptr<D3D12MA::Allocation>(
+                allocation,
+                [device = this](D3D12MA::Allocation* ptr) {
+                    if (!ptr)
+                    {
+                        return;
+                    }
+
+                    if (device && device->GetD3DDevice())
+                    {
+                        device->EnqueueDeferredDeletion([ptr]() { ptr->Release(); },
+                                                        device->GetCurrentFrameFenceValue());
+                    }
+                    else
+                    {
+                        ptr->Release();
+                    }
+                });
+
+            entry.desc = desc;
+            entry.valid = true;
+            entry.allocation = aliasingAllocation;
+
+            WEST_LOG_INFO(LogCategory::RHI, "DX12 transient texture alias slot {} allocated ({}x{}, format={})",
+                          aliasSlot, desc.width, desc.height, static_cast<uint32_t>(desc.format));
+        }
+    }
+
+    auto texture = std::make_unique<DX12Texture>();
+    texture->InitializeAliased(this, desc, std::move(aliasingAllocation));
+    return texture;
 }
 
 std::unique_ptr<IRHISampler> DX12Device::CreateSampler(const RHISamplerDesc& desc)

@@ -11,6 +11,7 @@
 #include "generated/ShaderMetadata.h"
 #include "render/Passes/ForwardTexturedQuadPass.h"
 #include "render/Passes/ToneMappingPass.h"
+#include "render/RenderGraph/CommandListPool.h"
 #include "render/RenderGraph/RenderGraph.h"
 #include "render/RenderGraph/TransientResourcePool.h"
 #include "rhi/interface/IRHIBuffer.h"
@@ -260,6 +261,8 @@ void Win32Application::InitializeRHI()
 
     // Create bindless textured quad resources
     InitializeTexturedQuad();
+    m_commandListPool = std::make_unique<render::CommandListPool>();
+    m_frameGraph = std::make_unique<render::RenderGraph>();
     m_transientResourcePool = std::make_unique<render::TransientResourcePool>();
     m_forwardTexturedQuadPass = std::make_unique<render::ForwardTexturedQuadPass>(
         *m_rhiDevice, *m_psoCache, m_backend, m_quadVB.get(), m_quadIB.get(), m_checkerTexture.get(),
@@ -610,36 +613,22 @@ void Win32Application::RenderFrame()
     WEST_ASSERT(m_toneMappingPass != nullptr);
     WEST_ASSERT(m_transientResourcePool != nullptr);
 
-    render::RenderGraph graph;
-    const render::TextureHandle backBufferHandle =
-        graph.ImportTexture(backBuffer,
-                            m_isFirstFrame[imageIndex] ? rhi::RHIResourceState::Undefined
-                                                       : rhi::RHIResourceState::Present,
-                            rhi::RHIResourceState::Present, "SwapchainBackBuffer");
-
-    rhi::RHITextureDesc sceneColorDesc{};
-    sceneColorDesc.width = backBuffer->GetDesc().width;
-    sceneColorDesc.height = backBuffer->GetDesc().height;
-    sceneColorDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
-    sceneColorDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
-    sceneColorDesc.debugName = "SceneColorHDR";
-
-    const render::TextureHandle sceneColorHandle = graph.CreateTransientTexture(sceneColorDesc);
-    m_forwardTexturedQuadPass->Configure(sceneColorHandle, {r, g, b, 1.0f});
-    m_toneMappingPass->Configure(sceneColorHandle, backBufferHandle);
-    graph.AddPass(*m_forwardTexturedQuadPass);
-    graph.AddPass(*m_toneMappingPass);
-    graph.Compile();
+    const rhi::RHIResourceState backBufferInitialState =
+        m_isFirstFrame[imageIndex] ? rhi::RHIResourceState::Undefined : rhi::RHIResourceState::Present;
+    EnsureFrameGraph(backBuffer, backBufferInitialState);
+    WEST_ASSERT(m_frameGraph != nullptr);
+    m_forwardTexturedQuadPass->Configure(m_frameSceneColorHandle, {r, g, b, 1.0f});
 
     render::RenderGraph::ExecuteDesc executeDesc{
         .device = *m_rhiDevice,
         .timelineFence = *m_frameFence,
         .transientResourcePool = *m_transientResourcePool,
+        .commandListPool = m_commandListPool.get(),
         .waitSemaphore = acquireSem,
         .signalSemaphore = m_backend == rhi::RHIBackend::Vulkan ? m_presentSemaphores[imageIndex].get() : nullptr,
     };
 
-    m_fenceValues[frameIndex] = graph.Execute(executeDesc);
+    m_fenceValues[frameIndex] = m_frameGraph->Execute(executeDesc);
     m_isFirstFrame[imageIndex] = false;
 
     // 5. Present
@@ -668,6 +657,13 @@ void Win32Application::ResizeSwapChain(uint32 width, uint32 height)
 
     const uint32 numSwapBuffers = m_swapChain->GetBufferCount();
     m_isFirstFrame.assign(numSwapBuffers, true);
+    m_frameGraphWidth = 0;
+    m_frameGraphHeight = 0;
+    m_frameGraphBackBufferFormat = rhi::RHIFormat::Unknown;
+    if (m_frameGraph)
+    {
+        m_frameGraph->Reset();
+    }
 
     if (m_backend == rhi::RHIBackend::Vulkan)
     {
@@ -680,6 +676,49 @@ void Win32Application::ResizeSwapChain(uint32 width, uint32 height)
     }
 
     Logger::Log(LogLevel::Info, LogCategory::RHI, std::format("SwapChain resize handled: {}x{}", width, height));
+}
+
+void Win32Application::EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIResourceState initialState)
+{
+    WEST_ASSERT(backBuffer != nullptr);
+    WEST_ASSERT(m_frameGraph != nullptr);
+    WEST_ASSERT(m_forwardTexturedQuadPass != nullptr);
+    WEST_ASSERT(m_toneMappingPass != nullptr);
+
+    const rhi::RHITextureDesc& backBufferDesc = backBuffer->GetDesc();
+    const bool needsRebuild = !m_frameBackBufferHandle.IsValid() ||
+                              m_frameGraphWidth != backBufferDesc.width ||
+                              m_frameGraphHeight != backBufferDesc.height ||
+                              m_frameGraphBackBufferFormat != backBufferDesc.format;
+
+    if (needsRebuild)
+    {
+        m_frameGraph->Reset();
+        m_frameBackBufferHandle =
+            m_frameGraph->ImportTexture(backBuffer, initialState, rhi::RHIResourceState::Present, "SwapchainBackBuffer");
+
+        rhi::RHITextureDesc sceneColorDesc{};
+        sceneColorDesc.width = backBufferDesc.width;
+        sceneColorDesc.height = backBufferDesc.height;
+        sceneColorDesc.format = rhi::RHIFormat::RGBA16_FLOAT;
+        sceneColorDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::ShaderResource;
+        sceneColorDesc.debugName = "SceneColorHDR";
+
+        m_frameSceneColorHandle = m_frameGraph->CreateTransientTexture(sceneColorDesc);
+        m_forwardTexturedQuadPass->Configure(m_frameSceneColorHandle, {0.0f, 0.0f, 0.0f, 1.0f});
+        m_toneMappingPass->Configure(m_frameSceneColorHandle, m_frameBackBufferHandle);
+        m_frameGraph->AddPass(*m_forwardTexturedQuadPass);
+        m_frameGraph->AddPass(*m_toneMappingPass);
+        m_frameGraph->Compile();
+
+        m_frameGraphWidth = backBufferDesc.width;
+        m_frameGraphHeight = backBufferDesc.height;
+        m_frameGraphBackBufferFormat = backBufferDesc.format;
+        return;
+    }
+
+    m_frameGraph->UpdateImportedTexture(m_frameBackBufferHandle, backBuffer, initialState,
+                                        rhi::RHIResourceState::Present, "SwapchainBackBuffer");
 }
 
 void Win32Application::Shutdown()
@@ -716,8 +755,15 @@ void Win32Application::ShutdownRHI()
         m_transientResourcePool->Reset(m_rhiDevice.get());
     }
 
+    if (m_commandListPool)
+    {
+        m_commandListPool->Reset();
+    }
+
     m_toneMappingPass.reset();
     m_forwardTexturedQuadPass.reset();
+    m_frameGraph.reset();
+    m_commandListPool.reset();
     m_transientResourcePool.reset();
     m_psoCache.reset();
     m_checkerSampler.reset();

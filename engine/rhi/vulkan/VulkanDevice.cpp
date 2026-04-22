@@ -18,6 +18,7 @@
 #include "rhi/vulkan/VulkanSemaphore.h"
 #include "rhi/vulkan/VulkanSwapChain.h"
 #include "rhi/vulkan/VulkanTexture.h"
+#include "rhi/common/FormatConversion.h"
 
 // Win32 surface extension name — defined directly to avoid pulling in Windows headers.
 // VulkanSwapChain.cpp includes Win32Headers.h and vulkan_win32.h for actual surface creation.
@@ -25,6 +26,7 @@
 #define VK_KHR_WIN32_SURFACE_EXTENSION_NAME "VK_KHR_win32_surface"
 #endif
 
+#include <array>
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -32,6 +34,112 @@
 
 namespace west::rhi
 {
+
+namespace
+{
+
+struct QueueSelection
+{
+    uint32_t familyIndex = UINT32_MAX;
+    uint32_t queueIndex = 0;
+};
+
+[[nodiscard]] bool SupportsQueueFlags(const VkQueueFamilyProperties& familyProperties, VkQueueFlags requiredFlags)
+{
+    return (familyProperties.queueFlags & requiredFlags) == requiredFlags;
+}
+
+[[nodiscard]] uint32_t FindQueueFamily(std::span<const VkQueueFamilyProperties> queueFamilies,
+                                       VkQueueFlags requiredFlags, VkQueueFlags preferredAbsentFlags)
+{
+    uint32_t fallbackFamily = UINT32_MAX;
+    for (uint32_t familyIndex = 0; familyIndex < queueFamilies.size(); ++familyIndex)
+    {
+        const VkQueueFamilyProperties& familyProperties = queueFamilies[familyIndex];
+        if (!SupportsQueueFlags(familyProperties, requiredFlags))
+        {
+            continue;
+        }
+
+        if (fallbackFamily == UINT32_MAX)
+        {
+            fallbackFamily = familyIndex;
+        }
+
+        if ((familyProperties.queueFlags & preferredAbsentFlags) == 0)
+        {
+            return familyIndex;
+        }
+    }
+
+    return fallbackFamily;
+}
+
+[[nodiscard]] QueueSelection AllocateQueueSelection(std::span<const VkQueueFamilyProperties> queueFamilies,
+                                                    uint32_t familyIndex, std::vector<uint32_t>& nextQueueIndices)
+{
+    WEST_ASSERT(familyIndex != UINT32_MAX);
+    WEST_ASSERT(familyIndex < queueFamilies.size());
+
+    QueueSelection selection{};
+    selection.familyIndex = familyIndex;
+
+    const uint32_t queueCount = queueFamilies[familyIndex].queueCount;
+    WEST_ASSERT(queueCount > 0);
+
+    const uint32_t nextQueueIndex = nextQueueIndices[familyIndex];
+    if (nextQueueIndex < queueCount)
+    {
+        selection.queueIndex = nextQueueIndex;
+        nextQueueIndices[familyIndex] = nextQueueIndex + 1;
+        return selection;
+    }
+
+    selection.queueIndex = queueCount - 1;
+    return selection;
+}
+
+void AppendUniqueFamily(std::vector<uint32_t>& familyIndices, uint32_t familyIndex)
+{
+    if (std::find(familyIndices.begin(), familyIndices.end(), familyIndex) == familyIndices.end())
+    {
+        familyIndices.push_back(familyIndex);
+    }
+}
+
+[[nodiscard]] VkImageCreateInfo BuildTransientImageCreateInfo(const RHITextureDesc& desc)
+{
+    VkImageUsageFlags usageFlags = 0;
+    if (HasFlag(desc.usage, RHITextureUsage::ShaderResource))
+        usageFlags |= VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (HasFlag(desc.usage, RHITextureUsage::UnorderedAccess))
+        usageFlags |= VK_IMAGE_USAGE_STORAGE_BIT;
+    if (HasFlag(desc.usage, RHITextureUsage::RenderTarget))
+        usageFlags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (HasFlag(desc.usage, RHITextureUsage::DepthStencil))
+        usageFlags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    if (HasFlag(desc.usage, RHITextureUsage::CopySource))
+        usageFlags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (HasFlag(desc.usage, RHITextureUsage::CopyDest))
+        usageFlags |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.flags = VK_IMAGE_CREATE_ALIAS_BIT;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = static_cast<VkFormat>(ToVkFormat(desc.format));
+    imageInfo.extent = {desc.width, desc.height, desc.depth};
+    imageInfo.mipLevels = desc.mipLevels;
+    imageInfo.arrayLayers = desc.arrayLayers;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = usageFlags;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    return imageInfo;
+}
+
+} // namespace
 
 VulkanDevice::VulkanDevice() = default;
 
@@ -118,20 +226,32 @@ bool VulkanDevice::Initialize(const RHIDeviceConfig& config)
     QueryDeviceCaps();
     WEST_CHECK(m_caps.maxBindlessResources > 0, "Vulkan bindless requires descriptor indexing support");
 
-    // Create graphics queue wrapper
-    VkQueue graphicsQueue;
-    vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &graphicsQueue);
+    VkQueue graphicsQueue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(m_device, m_graphicsQueueFamily, m_graphicsQueueIndex, &graphicsQueue);
     m_graphicsQueue = std::make_unique<VulkanQueue>();
-    m_graphicsQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, RHIQueueType::Graphics);
+    m_graphicsQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, m_graphicsQueueIndex, RHIQueueType::Graphics);
+
+    VkQueue computeQueue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(m_device, m_computeQueueFamily, m_computeQueueIndex, &computeQueue);
     m_computeQueue = std::make_unique<VulkanQueue>();
-    m_computeQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, RHIQueueType::Compute);
+    m_computeQueue->Initialize(computeQueue, m_computeQueueFamily, m_computeQueueIndex, RHIQueueType::Compute);
+
+    VkQueue copyQueue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(m_device, m_copyQueueFamily, m_copyQueueIndex, &copyQueue);
     m_copyQueue = std::make_unique<VulkanQueue>();
-    m_copyQueue->Initialize(graphicsQueue, m_graphicsQueueFamily, RHIQueueType::Copy);
+    m_copyQueue->Initialize(copyQueue, m_copyQueueFamily, m_copyQueueIndex, RHIQueueType::Copy);
 
     WEST_LOG_INFO(LogCategory::RHI, "Vulkan Device initialized: {}", m_deviceName);
     WEST_LOG_INFO(LogCategory::RHI, "  VRAM: {} MB", m_caps.dedicatedVideoMemory / (1024 * 1024));
     WEST_LOG_INFO(LogCategory::RHI, "  Ray Tracing: {}", m_caps.supportsRayTracing ? "Yes" : "No");
     WEST_LOG_INFO(LogCategory::RHI, "  Mesh Shaders: {}", m_caps.supportsMeshShaders ? "Yes" : "No");
+    WEST_LOG_INFO(LogCategory::RHI,
+                  "  Queue topology: G({}:{}) C({}:{}) T({}:{}) families={}, sharing={}",
+                  m_graphicsQueueFamily, m_graphicsQueueIndex,
+                  m_computeQueueFamily, m_computeQueueIndex,
+                  m_copyQueueFamily, m_copyQueueIndex,
+                  m_activeQueueFamilies.size(),
+                  m_activeQueueFamilies.size() > 1 ? "concurrent" : "exclusive");
 
     // Phase 2: Initialize VMA
     m_memoryAllocator = std::make_unique<VulkanMemoryAllocator>();
@@ -334,34 +454,91 @@ void VulkanDevice::SelectPhysicalDevice(uint32_t preferredIndex)
     vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
     m_deviceName = props.deviceName;
 
-    // Find graphics queue family
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-    for (uint32_t i = 0; i < queueFamilyCount; ++i)
+    m_graphicsQueueFamily = FindQueueFamily(queueFamilies, VK_QUEUE_GRAPHICS_BIT, 0);
+    m_computeQueueFamily = FindQueueFamily(queueFamilies, VK_QUEUE_COMPUTE_BIT, VK_QUEUE_GRAPHICS_BIT);
+    if (m_computeQueueFamily == UINT32_MAX)
     {
-        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-        {
-            m_graphicsQueueFamily = i;
-            break;
-        }
+        m_computeQueueFamily = FindQueueFamily(queueFamilies, VK_QUEUE_COMPUTE_BIT, 0);
+    }
+
+    m_copyQueueFamily = FindQueueFamily(queueFamilies, VK_QUEUE_TRANSFER_BIT,
+                                        VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
+    if (m_copyQueueFamily == UINT32_MAX)
+    {
+        m_copyQueueFamily = FindQueueFamily(queueFamilies, VK_QUEUE_TRANSFER_BIT, VK_QUEUE_GRAPHICS_BIT);
+    }
+    if (m_copyQueueFamily == UINT32_MAX)
+    {
+        m_copyQueueFamily = FindQueueFamily(queueFamilies, VK_QUEUE_TRANSFER_BIT, 0);
     }
 
     WEST_CHECK(m_graphicsQueueFamily != UINT32_MAX, "No graphics queue family found on selected GPU");
+    WEST_CHECK(m_computeQueueFamily != UINT32_MAX, "No compute queue family found on selected GPU");
+    WEST_CHECK(m_copyQueueFamily != UINT32_MAX, "No copy queue family found on selected GPU");
+
+    std::vector<uint32_t> nextQueueIndices(queueFamilyCount, 0);
+    const QueueSelection graphicsQueue = AllocateQueueSelection(queueFamilies, m_graphicsQueueFamily, nextQueueIndices);
+    const QueueSelection computeQueue = AllocateQueueSelection(queueFamilies, m_computeQueueFamily, nextQueueIndices);
+    const QueueSelection copyQueue = AllocateQueueSelection(queueFamilies, m_copyQueueFamily, nextQueueIndices);
+
+    m_graphicsQueueIndex = graphicsQueue.queueIndex;
+    m_computeQueueIndex = computeQueue.queueIndex;
+    m_copyQueueIndex = copyQueue.queueIndex;
+
+    m_activeQueueFamilies.clear();
+    AppendUniqueFamily(m_activeQueueFamilies, m_graphicsQueueFamily);
+    AppendUniqueFamily(m_activeQueueFamilies, m_computeQueueFamily);
+    AppendUniqueFamily(m_activeQueueFamilies, m_copyQueueFamily);
 }
 
 // ── Logical Device Creation ───────────────────────────────────────────────
 
 void VulkanDevice::CreateLogicalDevice(bool enableValidation)
 {
-    float queuePriority = 1.0f;
-    VkDeviceQueueCreateInfo queueCreateInfo{};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = m_graphicsQueueFamily;
-    queueCreateInfo.queueCount = 1;
-    queueCreateInfo.pQueuePriorities = &queuePriority;
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
+
+    std::vector<uint32_t> requestedQueueCounts(queueFamilyCount, 0);
+    auto requestQueueCount = [&](uint32_t familyIndex, uint32_t queueIndex)
+    {
+        requestedQueueCounts[familyIndex] = (std::max)(requestedQueueCounts[familyIndex], queueIndex + 1);
+    };
+
+    requestQueueCount(m_graphicsQueueFamily, m_graphicsQueueIndex);
+    requestQueueCount(m_computeQueueFamily, m_computeQueueIndex);
+    requestQueueCount(m_copyQueueFamily, m_copyQueueIndex);
+
+    std::vector<std::array<float, 3>> queuePriorities(queueFamilyCount);
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    queueCreateInfos.reserve(m_activeQueueFamilies.size());
+    for (uint32_t familyIndex = 0; familyIndex < queueFamilyCount; ++familyIndex)
+    {
+        const uint32_t requestedQueueCount = requestedQueueCounts[familyIndex];
+        if (requestedQueueCount == 0)
+        {
+            continue;
+        }
+
+        WEST_CHECK(requestedQueueCount <= queueFamilies[familyIndex].queueCount,
+                   "Requested Vulkan queue count exceeds family capacity");
+
+        auto& priorities = queuePriorities[familyIndex];
+        priorities.fill(1.0f);
+
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = familyIndex;
+        queueCreateInfo.queueCount = requestedQueueCount;
+        queueCreateInfo.pQueuePriorities = priorities.data();
+        queueCreateInfos.push_back(queueCreateInfo);
+    }
 
     // Required device extensions
     std::vector<const char*> deviceExtensions = {
@@ -483,8 +660,8 @@ void VulkanDevice::CreateLogicalDevice(bool enableValidation)
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.pNext = &features2;
-    deviceCreateInfo.queueCreateInfoCount = 1;
-    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
+    deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+    deviceCreateInfo.pQueueCreateInfos = queueCreateInfos.data();
     deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -693,7 +870,7 @@ void VulkanDevice::CreateBindlessDescriptors()
     bufferInfo.usage = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT |
                        VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT |
                        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ConfigureQueueSharing(bufferInfo);
 
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
@@ -761,9 +938,55 @@ std::unique_ptr<IRHISemaphore> VulkanDevice::CreateBinarySemaphore()
 std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(RHIQueueType type)
 {
     auto cmdList = std::make_unique<VulkanCommandList>();
-    cmdList->Initialize(m_device, m_graphicsQueueFamily, type, m_bindlessDescriptorBufferAddress,
+    cmdList->Initialize(m_device, GetQueueFamily(type), type, m_bindlessDescriptorBufferAddress,
                         m_vkCmdBindDescriptorBuffersEXT, m_vkCmdSetDescriptorBufferOffsetsEXT);
     return cmdList;
+}
+
+uint32_t VulkanDevice::GetQueueFamily(RHIQueueType type) const
+{
+    switch (type)
+    {
+    case RHIQueueType::Graphics:
+        return m_graphicsQueueFamily;
+    case RHIQueueType::Compute:
+        return m_computeQueueFamily;
+    case RHIQueueType::Copy:
+        return m_copyQueueFamily;
+    }
+
+    WEST_ASSERT(false);
+    return m_graphicsQueueFamily;
+}
+
+void VulkanDevice::ConfigureQueueSharing(VkBufferCreateInfo& bufferInfo) const
+{
+    if (m_activeQueueFamilies.size() > 1)
+    {
+        bufferInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        bufferInfo.queueFamilyIndexCount = static_cast<uint32_t>(m_activeQueueFamilies.size());
+        bufferInfo.pQueueFamilyIndices = m_activeQueueFamilies.data();
+        return;
+    }
+
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bufferInfo.queueFamilyIndexCount = 0;
+    bufferInfo.pQueueFamilyIndices = nullptr;
+}
+
+void VulkanDevice::ConfigureQueueSharing(VkImageCreateInfo& imageInfo) const
+{
+    if (m_activeQueueFamilies.size() > 1)
+    {
+        imageInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        imageInfo.queueFamilyIndexCount = static_cast<uint32_t>(m_activeQueueFamilies.size());
+        imageInfo.pQueueFamilyIndices = m_activeQueueFamilies.data();
+        return;
+    }
+
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.queueFamilyIndexCount = 0;
+    imageInfo.pQueueFamilyIndices = nullptr;
 }
 
 IRHIQueue* VulkanDevice::GetQueue(RHIQueueType type)
@@ -828,9 +1051,78 @@ std::unique_ptr<IRHIBuffer> VulkanDevice::CreateTransientBuffer(const RHIBufferD
     return CreateBuffer(desc);
 }
 
-std::unique_ptr<IRHITexture> VulkanDevice::CreateTransientTexture(const RHITextureDesc& desc, uint32_t /*aliasSlot*/)
+std::unique_ptr<IRHITexture> VulkanDevice::CreateTransientTexture(const RHITextureDesc& desc, uint32_t aliasSlot)
 {
-    return CreateTexture(desc);
+    if (aliasSlot == UINT32_MAX)
+    {
+        return CreateTexture(desc);
+    }
+
+    std::shared_ptr<VmaAllocation_T> aliasingAllocation;
+    {
+        std::lock_guard<std::mutex> lock(m_transientTextureMutex);
+
+        if (aliasSlot >= m_transientTextureAliases.size())
+        {
+            m_transientTextureAliases.resize(aliasSlot + 1);
+        }
+
+        TransientTextureAliasEntry& entry = m_transientTextureAliases[aliasSlot];
+        aliasingAllocation = entry.allocation.lock();
+
+        if (!aliasingAllocation || !entry.valid || entry.desc != desc)
+        {
+            VkImageCreateInfo imageInfo = BuildTransientImageCreateInfo(desc);
+            ConfigureQueueSharing(imageInfo);
+
+            VkImage probeImage = VK_NULL_HANDLE;
+            WEST_VK_CHECK(vkCreateImage(m_device, &imageInfo, nullptr, &probeImage));
+
+            VmaAllocationCreateInfo allocInfo{};
+            allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            allocInfo.flags = VMA_ALLOCATION_CREATE_CAN_ALIAS_BIT;
+
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            const VmaAllocator allocatorHandle = m_memoryAllocator->GetAllocator();
+            const VkDevice deviceHandle = m_device;
+            WEST_VK_CHECK(vmaAllocateMemoryForImage(allocatorHandle, probeImage, &allocInfo, &allocation, nullptr));
+            vkDestroyImage(deviceHandle, probeImage, nullptr);
+
+            aliasingAllocation = std::shared_ptr<VmaAllocation_T>(
+                allocation,
+                [device = this, allocatorHandle](VmaAllocation_T* ptr) {
+                    const VmaAllocation allocationHandle = ptr;
+                    if (!allocationHandle)
+                    {
+                        return;
+                    }
+
+                    if (device && device->GetVkDevice() != VK_NULL_HANDLE)
+                    {
+                        device->EnqueueDeferredDeletion(
+                            [allocatorHandle, allocationHandle]() {
+                                vmaFreeMemory(allocatorHandle, allocationHandle);
+                            },
+                            device->GetCurrentFrameFenceValue());
+                    }
+                    else
+                    {
+                        vmaFreeMemory(allocatorHandle, allocationHandle);
+                    }
+                });
+
+            entry.desc = desc;
+            entry.valid = true;
+            entry.allocation = aliasingAllocation;
+
+            WEST_LOG_INFO(LogCategory::RHI, "Vulkan transient texture alias slot {} allocated ({}x{}, format={})",
+                          aliasSlot, desc.width, desc.height, static_cast<uint32_t>(desc.format));
+        }
+    }
+
+    auto texture = std::make_unique<VulkanTexture>();
+    texture->InitializeAliased(this, desc, std::move(aliasingAllocation));
+    return texture;
 }
 
 std::unique_ptr<IRHISampler> VulkanDevice::CreateSampler(const RHISamplerDesc& desc)
