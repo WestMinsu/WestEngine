@@ -39,6 +39,9 @@ public:
     /// Current client area dimensions.
     [[nodiscard]] virtual uint32 GetWidth() const = 0;
     [[nodiscard]] virtual uint32 GetHeight() const = 0;
+
+    /// Update the OS window title.
+    virtual void SetTitle(std::string_view title) = 0;
 };
 
 } // namespace west

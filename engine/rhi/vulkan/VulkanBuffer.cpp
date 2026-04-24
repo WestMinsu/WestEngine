@@ -14,6 +14,10 @@ VulkanBuffer::~VulkanBuffer()
 {
     if (m_mappedPtr && m_vmaAllocator)
     {
+        if (m_desc.memoryType == RHIMemoryType::Upload || m_desc.memoryType == RHIMemoryType::GPUShared)
+        {
+            WEST_VK_CHECK(vmaFlushAllocation(m_vmaAllocator, m_allocation, 0, VK_WHOLE_SIZE));
+        }
         vmaUnmapMemory(m_vmaAllocator, m_allocation);
         m_mappedPtr = nullptr;
     }
@@ -79,6 +83,8 @@ void VulkanBuffer::Initialize(VulkanDevice* device, const RHIBufferDesc& desc)
     // Ensure transfer bits are set for staging operations
     if (desc.memoryType == RHIMemoryType::Upload)
         usageFlags |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    if (desc.memoryType == RHIMemoryType::Readback)
+        usageFlags |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     if (desc.memoryType == RHIMemoryType::GPULocal)
         usageFlags |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
@@ -97,10 +103,16 @@ void VulkanBuffer::Initialize(VulkanDevice* device, const RHIBufferDesc& desc)
         allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
         break;
     case RHIMemoryType::Upload:
-        allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
         break;
     case RHIMemoryType::Readback:
-        allocInfo.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
         break;
     case RHIMemoryType::GPUShared:
         // ReBAR: prefer device-local + host-visible
@@ -112,8 +124,11 @@ void VulkanBuffer::Initialize(VulkanDevice* device, const RHIBufferDesc& desc)
         }
         else
         {
-            // Fallback to CPU_TO_GPU (upload heap)
-            allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            // Fallback to host-visible upload memory.
+            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+            allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+            allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
         }
         break;
     }
@@ -138,6 +153,11 @@ void* VulkanBuffer::Map()
         return nullptr;
     }
 
+    if (m_desc.memoryType == RHIMemoryType::Readback)
+    {
+        WEST_VK_CHECK(vmaInvalidateAllocation(m_vmaAllocator, m_allocation, 0, VK_WHOLE_SIZE));
+    }
+
     return m_mappedPtr;
 }
 
@@ -145,6 +165,11 @@ void VulkanBuffer::Unmap()
 {
     if (!m_mappedPtr)
         return;
+
+    if (m_desc.memoryType == RHIMemoryType::Upload || m_desc.memoryType == RHIMemoryType::GPUShared)
+    {
+        WEST_VK_CHECK(vmaFlushAllocation(m_vmaAllocator, m_allocation, 0, VK_WHOLE_SIZE));
+    }
 
     vmaUnmapMemory(m_vmaAllocator, m_allocation);
     m_mappedPtr = nullptr;

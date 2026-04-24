@@ -14,6 +14,59 @@ namespace west::rhi
 namespace
 {
 
+[[nodiscard]] bool IsDepthFormat(RHIFormat format)
+{
+    return format == RHIFormat::D16_UNORM ||
+           format == RHIFormat::D24_UNORM_S8_UINT ||
+           format == RHIFormat::D32_FLOAT ||
+           format == RHIFormat::D32_FLOAT_S8_UINT;
+}
+
+[[nodiscard]] DXGI_FORMAT ToDX12DepthResourceFormat(RHIFormat format)
+{
+    switch (format)
+    {
+    case RHIFormat::D16_UNORM:
+        return DXGI_FORMAT_R16_TYPELESS;
+    case RHIFormat::D24_UNORM_S8_UINT:
+        return DXGI_FORMAT_R24G8_TYPELESS;
+    case RHIFormat::D32_FLOAT:
+        return DXGI_FORMAT_R32_TYPELESS;
+    case RHIFormat::D32_FLOAT_S8_UINT:
+        return DXGI_FORMAT_R32G8X24_TYPELESS;
+    default:
+        return static_cast<DXGI_FORMAT>(ToDXGIFormat(format));
+    }
+}
+
+[[nodiscard]] DXGI_FORMAT ToDX12DepthStencilViewFormat(RHIFormat format)
+{
+    switch (format)
+    {
+    case RHIFormat::D16_UNORM:
+        return DXGI_FORMAT_D16_UNORM;
+    case RHIFormat::D24_UNORM_S8_UINT:
+        return DXGI_FORMAT_D24_UNORM_S8_UINT;
+    case RHIFormat::D32_FLOAT:
+        return DXGI_FORMAT_D32_FLOAT;
+    case RHIFormat::D32_FLOAT_S8_UINT:
+        return DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+    default:
+        return static_cast<DXGI_FORMAT>(ToDXGIFormat(format));
+    }
+}
+
+[[nodiscard]] DXGI_FORMAT ResolveResourceFormat(const RHITextureDesc& desc)
+{
+    if (HasFlag(desc.usage, RHITextureUsage::DepthStencil) && HasFlag(desc.usage, RHITextureUsage::ShaderResource) &&
+        IsDepthFormat(desc.format))
+    {
+        return ToDX12DepthResourceFormat(desc.format);
+    }
+
+    return static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
+}
+
 [[nodiscard]] D3D12_RESOURCE_DESC BuildResourceDesc(const RHITextureDesc& desc)
 {
     D3D12_RESOURCE_DESC resourceDesc{};
@@ -23,7 +76,7 @@ namespace
     resourceDesc.Height = desc.height;
     resourceDesc.DepthOrArraySize = static_cast<UINT16>(desc.arrayLayers);
     resourceDesc.MipLevels = static_cast<UINT16>(desc.mipLevels);
-    resourceDesc.Format = static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
+    resourceDesc.Format = ResolveResourceFormat(desc);
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.SampleDesc.Quality = 0;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -58,21 +111,41 @@ void SetDebugName(ID3D12Resource* resource, const char* debugName)
     resource->SetName(wideName);
 }
 
-void CreateRTVIfNeeded(DX12Device* device, ID3D12Resource* resource, const RHITextureDesc& desc,
-                       ComPtr<ID3D12DescriptorHeap>& rtvHeap, D3D12_CPU_DESCRIPTOR_HANDLE& rtvHandle)
+void CreateViewsIfNeeded(DX12Device* device, ID3D12Resource* resource, const RHITextureDesc& desc,
+                         ComPtr<ID3D12DescriptorHeap>& rtvHeap, D3D12_CPU_DESCRIPTOR_HANDLE& rtvHandle,
+                         ComPtr<ID3D12DescriptorHeap>& dsvHeap, D3D12_CPU_DESCRIPTOR_HANDLE& dsvHandle)
 {
-    if (!device || !resource || !HasFlag(desc.usage, RHITextureUsage::RenderTarget))
+    if (!device || !resource)
     {
         return;
     }
 
-    D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
-    rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    rtvHeapDesc.NumDescriptors = 1;
-    rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    WEST_HR_CHECK(device->GetD3DDevice()->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap)));
-    rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    device->GetD3DDevice()->CreateRenderTargetView(resource, nullptr, rtvHandle);
+    if (HasFlag(desc.usage, RHITextureUsage::RenderTarget))
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
+        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtvHeapDesc.NumDescriptors = 1;
+        rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        WEST_HR_CHECK(device->GetD3DDevice()->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap)));
+        rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        device->GetD3DDevice()->CreateRenderTargetView(resource, nullptr, rtvHandle);
+    }
+
+    if (HasFlag(desc.usage, RHITextureUsage::DepthStencil))
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc{};
+        dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dsvHeapDesc.NumDescriptors = 1;
+        dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        WEST_HR_CHECK(device->GetD3DDevice()->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&dsvHeap)));
+        dsvHandle = dsvHeap->GetCPUDescriptorHandleForHeapStart();
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+        dsvDesc.Format = ToDX12DepthStencilViewFormat(desc.format);
+        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+        device->GetD3DDevice()->CreateDepthStencilView(resource, &dsvDesc, dsvHandle);
+    }
 }
 
 } // namespace
@@ -83,16 +156,18 @@ DX12Texture::~DX12Texture()
     {
         ID3D12Resource* resource = m_resource;
         ComPtr<ID3D12DescriptorHeap> rtvHeap = m_rtvHeap;
+        ComPtr<ID3D12DescriptorHeap> dsvHeap = m_dsvHeap;
 
         if (m_device)
         {
             m_device->EnqueueDeferredDeletion(
-                [resource, rtvHeap]() mutable {
+                [resource, rtvHeap, dsvHeap]() mutable {
                     if (resource)
                     {
                         resource->Release();
                     }
                     rtvHeap.Reset();
+                    dsvHeap.Reset();
                 },
                 m_device->GetCurrentFrameFenceValue());
         }
@@ -103,22 +178,29 @@ DX12Texture::~DX12Texture()
                 resource->Release();
             }
             rtvHeap.Reset();
+            dsvHeap.Reset();
         }
     }
     else if (m_allocation && m_ownsResource)
     {
         D3D12MA::Allocation* allocation = m_allocation;
+        ComPtr<ID3D12DescriptorHeap> rtvHeap = m_rtvHeap;
+        ComPtr<ID3D12DescriptorHeap> dsvHeap = m_dsvHeap;
         if (m_device)
         {
             m_device->EnqueueDeferredDeletion(
-                [allocation]() {
+                [allocation, rtvHeap, dsvHeap]() mutable {
                     allocation->Release();
+                    rtvHeap.Reset();
+                    dsvHeap.Reset();
                 },
                 m_device->GetCurrentFrameFenceValue());
         }
         else
         {
             allocation->Release();
+            rtvHeap.Reset();
+            dsvHeap.Reset();
         }
     }
 
@@ -126,13 +208,14 @@ DX12Texture::~DX12Texture()
     m_resource = nullptr;
     m_aliasingAllocation.reset();
     m_rtvHeap.Reset();
+    m_dsvHeap.Reset();
 }
 
 void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
 {
     WEST_ASSERT(device != nullptr);
     WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
-    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
+    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D || desc.dimension == RHITextureDim::TexCube);
 
     DX12MemoryAllocator* allocator = device->GetMemoryAllocator();
     WEST_ASSERT(allocator != nullptr);
@@ -157,7 +240,7 @@ void DX12Texture::Initialize(DX12Device* device, const RHITextureDesc& desc)
     WEST_HR_CHECK(hr);
 
     SetDebugName(m_resource, desc.debugName);
-    CreateRTVIfNeeded(device, m_resource, desc, m_rtvHeap, m_rtvHandle);
+    CreateViewsIfNeeded(device, m_resource, desc, m_rtvHeap, m_rtvHandle, m_dsvHeap, m_dsvHandle);
 
     WEST_LOG_VERBOSE(LogCategory::RHI, "DX12 Texture created: {} ({}x{})",
                      desc.debugName ? desc.debugName : "unnamed", desc.width, desc.height);
@@ -169,7 +252,7 @@ void DX12Texture::InitializeAliased(DX12Device* device, const RHITextureDesc& de
     WEST_ASSERT(device != nullptr);
     WEST_ASSERT(aliasingAllocation);
     WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
-    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
+    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D || desc.dimension == RHITextureDim::TexCube);
 
     DX12MemoryAllocator* allocator = device->GetMemoryAllocator();
     WEST_ASSERT(allocator != nullptr);
@@ -191,7 +274,7 @@ void DX12Texture::InitializeAliased(DX12Device* device, const RHITextureDesc& de
     WEST_HR_CHECK(hr);
 
     SetDebugName(m_resource, desc.debugName);
-    CreateRTVIfNeeded(device, m_resource, desc, m_rtvHeap, m_rtvHandle);
+    CreateViewsIfNeeded(device, m_resource, desc, m_rtvHeap, m_rtvHandle, m_dsvHeap, m_dsvHandle);
 
     WEST_LOG_VERBOSE(LogCategory::RHI, "DX12 Aliased Texture created: {} ({}x{})",
                      desc.debugName ? desc.debugName : "unnamed", desc.width, desc.height);

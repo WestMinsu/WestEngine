@@ -32,6 +32,40 @@ namespace west::rhi
 namespace
 {
 
+[[nodiscard]] DXGI_FORMAT ToDX12ShaderResourceViewFormat(RHIFormat format)
+{
+    switch (format)
+    {
+    case RHIFormat::D16_UNORM:
+        return DXGI_FORMAT_R16_UNORM;
+    case RHIFormat::D24_UNORM_S8_UINT:
+        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    case RHIFormat::D32_FLOAT:
+        return DXGI_FORMAT_R32_FLOAT;
+    case RHIFormat::D32_FLOAT_S8_UINT:
+        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+    default:
+        return static_cast<DXGI_FORMAT>(ToDXGIFormat(format));
+    }
+}
+
+[[nodiscard]] DXGI_FORMAT ToDX12DepthResourceFormat(RHIFormat format)
+{
+    switch (format)
+    {
+    case RHIFormat::D16_UNORM:
+        return DXGI_FORMAT_R16_TYPELESS;
+    case RHIFormat::D24_UNORM_S8_UINT:
+        return DXGI_FORMAT_R24G8_TYPELESS;
+    case RHIFormat::D32_FLOAT:
+        return DXGI_FORMAT_R32_TYPELESS;
+    case RHIFormat::D32_FLOAT_S8_UINT:
+        return DXGI_FORMAT_R32G8X24_TYPELESS;
+    default:
+        return static_cast<DXGI_FORMAT>(ToDXGIFormat(format));
+    }
+}
+
 [[nodiscard]] D3D12_RESOURCE_DESC BuildTextureResourceDesc(const RHITextureDesc& desc)
 {
     D3D12_RESOURCE_DESC resourceDesc{};
@@ -41,7 +75,10 @@ namespace
     resourceDesc.Height = desc.height;
     resourceDesc.DepthOrArraySize = static_cast<UINT16>(desc.arrayLayers);
     resourceDesc.MipLevels = static_cast<UINT16>(desc.mipLevels);
-    resourceDesc.Format = static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
+    resourceDesc.Format = HasFlag(desc.usage, RHITextureUsage::DepthStencil) &&
+                                  HasFlag(desc.usage, RHITextureUsage::ShaderResource)
+                              ? ToDX12DepthResourceFormat(desc.format)
+                              : static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.SampleDesc.Quality = 0;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -463,6 +500,7 @@ void DX12Device::CreateBindlessHeaps()
     m_resourceDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_samplerDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
     m_bindlessPool.Initialize(capacity);
+    m_bindlessPendingFree.assign(capacity, 0);
 
     WEST_LOG_INFO(LogCategory::RHI, "DX12 bindless heaps created (capacity={}).", capacity);
 }
@@ -658,6 +696,7 @@ std::unique_ptr<IRHISampler> DX12Device::CreateSampler(const RHISamplerDesc& des
 std::unique_ptr<IRHIPipeline> DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc)
 {
     auto pipeline = std::make_unique<DX12Pipeline>();
+    pipeline->SetOwnerDevice(this);
     pipeline->Initialize(m_device.Get(), m_globalRootSignature.Get(), desc);
     return pipeline;
 }
@@ -665,11 +704,12 @@ std::unique_ptr<IRHIPipeline> DX12Device::CreateGraphicsPipeline(const RHIGraphi
 std::unique_ptr<IRHIPipeline> DX12Device::CreateComputePipeline(const RHIComputePipelineDesc& desc)
 {
     auto pipeline = std::make_unique<DX12Pipeline>();
+    pipeline->SetOwnerDevice(this);
     pipeline->Initialize(m_device.Get(), m_globalRootSignature.Get(), desc);
     return pipeline;
 }
 
-BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer)
+BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer, bool writable)
 {
     WEST_ASSERT(buffer != nullptr);
 
@@ -684,25 +724,55 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer)
     }
 
     const RHIBufferDesc& desc = buffer->GetDesc();
-    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-
-    if (desc.structureByteStride > 0)
+    if (writable)
     {
-        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-        srvDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / desc.structureByteStride);
-        srvDesc.Buffer.StructureByteStride = desc.structureByteStride;
-        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+        WEST_CHECK(HasFlag(desc.usage, RHIBufferUsage::StorageBuffer),
+                   "DX12 writable bindless buffer requires StorageBuffer usage");
+        WEST_CHECK(desc.memoryType == RHIMemoryType::GPULocal,
+                   "DX12 writable bindless buffer requires GPULocal memory");
+
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+        uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+
+        if (desc.structureByteStride > 0)
+        {
+            uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+            uavDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / desc.structureByteStride);
+            uavDesc.Buffer.StructureByteStride = desc.structureByteStride;
+            uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+        }
+        else
+        {
+            uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+            uavDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / sizeof(uint32_t));
+            uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        }
+
+        m_device->CreateUnorderedAccessView(dx12Buffer->GetD3DResource(), nullptr, &uavDesc,
+                                            GetResourceDescriptorCPU(index));
     }
     else
     {
-        srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-        srvDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / sizeof(uint32_t));
-        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-    }
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
 
-    m_device->CreateShaderResourceView(dx12Buffer->GetD3DResource(), &srvDesc, GetResourceDescriptorCPU(index));
+        if (desc.structureByteStride > 0)
+        {
+            srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+            srvDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / desc.structureByteStride);
+            srvDesc.Buffer.StructureByteStride = desc.structureByteStride;
+            srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+        }
+        else
+        {
+            srvDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+            srvDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / sizeof(uint32_t));
+            srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        }
+
+        m_device->CreateShaderResourceView(dx12Buffer->GetD3DResource(), &srvDesc, GetResourceDescriptorCPU(index));
+    }
     dx12Buffer->SetBindlessIndex(index);
     return index;
 }
@@ -723,13 +793,25 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHITexture* texture)
 
     const RHITextureDesc& desc = texture->GetDesc();
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.Format = static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
+    srvDesc.Format = HasFlag(desc.usage, RHITextureUsage::DepthStencil)
+                         ? ToDX12ShaderResourceViewFormat(desc.format)
+                         : static_cast<DXGI_FORMAT>(ToDXGIFormat(desc.format));
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MostDetailedMip = 0;
-    srvDesc.Texture2D.MipLevels = desc.mipLevels;
-    srvDesc.Texture2D.PlaneSlice = 0;
-    srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+    if (desc.dimension == RHITextureDim::TexCube)
+    {
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        srvDesc.TextureCube.MostDetailedMip = 0;
+        srvDesc.TextureCube.MipLevels = desc.mipLevels;
+        srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+    }
+    else
+    {
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        srvDesc.Texture2D.MipLevels = desc.mipLevels;
+        srvDesc.Texture2D.PlaneSlice = 0;
+        srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+    }
 
     m_device->CreateShaderResourceView(dx12Texture->GetD3DResource(), &srvDesc, GetResourceDescriptorCPU(index));
     dx12Texture->SetBindlessIndex(index);
@@ -846,11 +928,37 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHISampler* sampler)
 
 void DX12Device::UnregisterBindlessResource(BindlessIndex index)
 {
-    std::lock_guard lock(m_bindlessMutex);
-    if (!m_bindlessPool.Free(index))
+    const uint64_t fenceValue = GetCurrentFrameFenceValue();
+
     {
-        WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless unregister ignored for invalid index {}", index);
+        std::lock_guard lock(m_bindlessMutex);
+        if (!m_bindlessPool.IsAllocated(index) || index >= m_bindlessPendingFree.size())
+        {
+            WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless unregister ignored for invalid index {}", index);
+            return;
+        }
+
+        if (m_bindlessPendingFree[index] != 0)
+        {
+            WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless unregister ignored for pending index {}", index);
+            return;
+        }
+
+        m_bindlessPendingFree[index] = 1;
     }
+
+    EnqueueDeferredDeletion([this, index]()
+    {
+        std::lock_guard lock(m_bindlessMutex);
+        if (!m_bindlessPool.Free(index))
+        {
+            WEST_LOG_WARNING(LogCategory::RHI, "DX12 deferred bindless free ignored for invalid index {}", index);
+        }
+        if (index < m_bindlessPendingFree.size())
+        {
+            m_bindlessPendingFree[index] = 0;
+        }
+    }, fenceValue);
 }
 
 } // namespace west::rhi

@@ -84,6 +84,55 @@ west_add_slang_shader(
     FRAGMENT PSMain
 )
 
+west_add_slang_shader(
+    NAME GBuffer
+    SOURCE shaders/GBuffer.slang
+    VERTEX VSMain
+    VERTEX_PROFILE vs_6_8
+    FRAGMENT PSMain
+)
+
+west_add_slang_shader(
+    NAME DeferredLighting
+    SOURCE shaders/DeferredLighting.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
+west_add_slang_shader(
+    NAME SSAO
+    SOURCE shaders/SSAO.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
+west_add_slang_shader(
+    NAME BokehDOF
+    SOURCE shaders/BokehDOF.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
+west_add_slang_shader(
+    NAME ShadowMap
+    SOURCE shaders/ShadowMap.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
+west_add_slang_shader(
+    NAME ImGui
+    SOURCE shaders/ImGui.slang
+    VERTEX VSMain
+    FRAGMENT PSMain
+)
+
+west_add_slang_shader(
+    NAME GPUDrivenCulling
+    SOURCE shaders/GPUDrivenCulling.slang
+    COMPUTE CSMain
+)
+
 west_finalize_slang_shaders()
 
 # ── Engine Targets ──────────────────────────────────────────────────────────

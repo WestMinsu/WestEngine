@@ -6,7 +6,7 @@
 
 #include "core/Assert.h"
 #include "render/RenderGraph/RenderGraphPass.h"
-#include "rhi/common/FormatConversion.h"
+#include "rhi/interface/RHIFormatUtils.h"
 
 #include <algorithm>
 #include <array>

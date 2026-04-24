@@ -46,7 +46,7 @@ set_property(GLOBAL PROPERTY WEST_SHADER_OUTPUTS "")
 function(west_add_slang_shader)
     cmake_parse_arguments(ARG
         ""
-        "NAME;SOURCE;VERTEX;FRAGMENT;COMPUTE"
+        "NAME;SOURCE;VERTEX;FRAGMENT;COMPUTE;VERTEX_PROFILE;FRAGMENT_PROFILE;COMPUTE_PROFILE"
         ""
         ${ARGN}
     )
@@ -69,6 +69,19 @@ function(west_add_slang_shader)
 
     set(_shader_outputs "")
     set(_reflection_outputs "")
+    set(_vertex_profile "vs_6_6")
+    set(_fragment_profile "ps_6_6")
+    set(_compute_profile "cs_6_6")
+
+    if(ARG_VERTEX_PROFILE)
+        set(_vertex_profile "${ARG_VERTEX_PROFILE}")
+    endif()
+    if(ARG_FRAGMENT_PROFILE)
+        set(_fragment_profile "${ARG_FRAGMENT_PROFILE}")
+    endif()
+    if(ARG_COMPUTE_PROFILE)
+        set(_compute_profile "${ARG_COMPUTE_PROFILE}")
+    endif()
 
     function(_west_add_slang_entry _stage_suffix _entry _dxil_profile)
         set(_dxil_output "${WEST_SHADER_OUTPUT_DIR}/${ARG_NAME}.${_stage_suffix}.dxil")
@@ -123,13 +136,13 @@ function(west_add_slang_shader)
     endfunction()
 
     if(ARG_VERTEX)
-        _west_add_slang_entry("vs" "${ARG_VERTEX}" "vs_6_6")
+        _west_add_slang_entry("vs" "${ARG_VERTEX}" "${_vertex_profile}")
     endif()
     if(ARG_FRAGMENT)
-        _west_add_slang_entry("ps" "${ARG_FRAGMENT}" "ps_6_6")
+        _west_add_slang_entry("ps" "${ARG_FRAGMENT}" "${_fragment_profile}")
     endif()
     if(ARG_COMPUTE)
-        _west_add_slang_entry("cs" "${ARG_COMPUTE}" "cs_6_6")
+        _west_add_slang_entry("cs" "${ARG_COMPUTE}" "${_compute_profile}")
     endif()
 
     if(NOT _shader_outputs)

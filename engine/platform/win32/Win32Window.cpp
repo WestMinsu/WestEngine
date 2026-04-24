@@ -54,8 +54,8 @@ bool Win32Window::Create(const WindowDesc& desc)
     int windowWidth = rect.right - rect.left;
     int windowHeight = rect.bottom - rect.top;
 
-    // Convert title to wide string
-    std::wstring wideTitle(desc.title.begin(), desc.title.end());
+    m_title = std::string(desc.title);
+    std::wstring wideTitle(m_title.begin(), m_title.end());
 
     HWND hwnd = ::CreateWindowExW(0, m_className.c_str(), wideTitle.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
                                   CW_USEDEFAULT, windowWidth, windowHeight, nullptr, nullptr, hInstance,
@@ -99,6 +99,18 @@ void Win32Window::PollEvents()
 void* Win32Window::GetNativeHandle() const
 {
     return m_hwnd;
+}
+
+void Win32Window::SetTitle(std::string_view title)
+{
+    m_title = std::string(title);
+    if (m_hwnd == nullptr)
+    {
+        return;
+    }
+
+    std::wstring wideTitle(m_title.begin(), m_title.end());
+    ::SetWindowTextW(static_cast<HWND>(m_hwnd), wideTitle.c_str());
 }
 
 // ── Static Window Procedure ────────────────────────────────────────────────

@@ -290,11 +290,14 @@ void VulkanCommandList::SetScissor(int32_t x, int32_t y, uint32_t w, uint32_t h)
 void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc)
 {
     std::vector<VkRenderingAttachmentInfo> colorAttachments;
+    colorAttachments.reserve(desc.colorAttachments.size());
 
     for (const auto& attach : desc.colorAttachments)
     {
         if (!attach.texture)
+        {
             continue;
+        }
 
         auto* vkTex = static_cast<VulkanTexture*>(attach.texture);
 
@@ -323,17 +326,56 @@ void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc)
         colorAttachments.push_back(colorInfo);
     }
 
+    VkRenderingAttachmentInfo depthAttachmentInfo{};
+    VkRenderingAttachmentInfo* depthAttachmentPtr = nullptr;
+    if (desc.depthAttachment.texture)
+    {
+        auto* vkDepth = static_cast<VulkanTexture*>(desc.depthAttachment.texture);
+
+        depthAttachmentInfo.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        depthAttachmentInfo.imageView = vkDepth->GetVkImageView();
+        depthAttachmentInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthAttachmentInfo.storeOp = (desc.depthAttachment.storeOp == RHIStoreOp::Store)
+                                          ? VK_ATTACHMENT_STORE_OP_STORE
+                                          : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+        if (desc.depthAttachment.loadOp == RHILoadOp::Clear)
+        {
+            depthAttachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depthAttachmentInfo.clearValue.depthStencil = {
+                desc.depthAttachment.clearDepth,
+                desc.depthAttachment.clearStencil,
+            };
+        }
+        else if (desc.depthAttachment.loadOp == RHILoadOp::Load)
+        {
+            depthAttachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        }
+        else
+        {
+            depthAttachmentInfo.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        }
+
+        depthAttachmentPtr = &depthAttachmentInfo;
+    }
+
     VkRenderingInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
     renderingInfo.renderArea.offset = {0, 0};
     renderingInfo.layerCount = 1;
     renderingInfo.colorAttachmentCount = static_cast<uint32_t>(colorAttachments.size());
     renderingInfo.pColorAttachments = colorAttachments.data();
+    renderingInfo.pDepthAttachment = depthAttachmentPtr;
 
     // Determine render area from first attachment
     if (!desc.colorAttachments.empty() && desc.colorAttachments[0].texture)
     {
         auto& texDesc = desc.colorAttachments[0].texture->GetDesc();
+        renderingInfo.renderArea.extent = {texDesc.width, texDesc.height};
+    }
+    else if (desc.depthAttachment.texture)
+    {
+        auto& texDesc = desc.depthAttachment.texture->GetDesc();
         renderingInfo.renderArea.extent = {texDesc.width, texDesc.height};
     }
 
@@ -412,11 +454,22 @@ void VulkanCommandList::DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
     vkCmdDrawIndexed(m_cmdBuffer, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
-void VulkanCommandList::DrawIndexedIndirectCount(IRHIBuffer* /*argsBuffer*/, uint64_t /*argsOffset*/,
-                                                 IRHIBuffer* /*countBuffer*/, uint64_t /*countOffset*/,
-                                                 uint32_t /*maxDrawCount*/, uint32_t /*stride*/)
+void VulkanCommandList::DrawIndexedIndirectCount(IRHIBuffer* argsBuffer, uint64_t argsOffset,
+                                                 IRHIBuffer* countBuffer, uint64_t countOffset,
+                                                 uint32_t maxDrawCount, uint32_t stride)
 {
-    // TODO(minsu): Phase 6
+    WEST_ASSERT(argsBuffer != nullptr);
+    WEST_ASSERT(countBuffer != nullptr);
+    WEST_ASSERT(stride == sizeof(VkDrawIndexedIndirectCommand));
+
+    auto* vkArgsBuffer = static_cast<VulkanBuffer*>(argsBuffer);
+    auto* vkCountBuffer = static_cast<VulkanBuffer*>(countBuffer);
+    WEST_ASSERT(vkArgsBuffer != nullptr);
+    WEST_ASSERT(vkCountBuffer != nullptr);
+
+    vkCmdDrawIndexedIndirectCount(m_cmdBuffer, vkArgsBuffer->GetVkBuffer(), argsOffset,
+                                  vkCountBuffer->GetVkBuffer(), countOffset,
+                                  maxDrawCount, stride);
 }
 
 void VulkanCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)

@@ -4,10 +4,12 @@
 // =============================================================================
 #include "rhi/dx12/DX12Pipeline.h"
 
+#include "rhi/dx12/DX12Device.h"
 #include "rhi/common/FormatConversion.h"
 #include "rhi/interface/RHIDescriptors.h"
 
 #include <d3d12sdklayers.h>
+#include <utility>
 #include <vector>
 
 namespace west::rhi
@@ -96,6 +98,76 @@ static D3D_PRIMITIVE_TOPOLOGY ToD3D12PrimitiveTopology(RHIPrimitiveTopology topo
     }
 }
 
+static D3D12_BLEND ToD3D12Blend(RHIBlendFactor factor)
+{
+    switch (factor)
+    {
+    case RHIBlendFactor::Zero:
+        return D3D12_BLEND_ZERO;
+    case RHIBlendFactor::One:
+        return D3D12_BLEND_ONE;
+    case RHIBlendFactor::SrcAlpha:
+        return D3D12_BLEND_SRC_ALPHA;
+    case RHIBlendFactor::OneMinusSrcAlpha:
+        return D3D12_BLEND_INV_SRC_ALPHA;
+    case RHIBlendFactor::DstAlpha:
+        return D3D12_BLEND_DEST_ALPHA;
+    case RHIBlendFactor::OneMinusDstAlpha:
+        return D3D12_BLEND_INV_DEST_ALPHA;
+    case RHIBlendFactor::SrcColor:
+        return D3D12_BLEND_SRC_COLOR;
+    case RHIBlendFactor::OneMinusSrcColor:
+        return D3D12_BLEND_INV_SRC_COLOR;
+    case RHIBlendFactor::DstColor:
+        return D3D12_BLEND_DEST_COLOR;
+    case RHIBlendFactor::OneMinusDstColor:
+        return D3D12_BLEND_INV_DEST_COLOR;
+    default:
+        return D3D12_BLEND_ONE;
+    }
+}
+
+static D3D12_BLEND_OP ToD3D12BlendOp(RHIBlendOp op)
+{
+    switch (op)
+    {
+    case RHIBlendOp::Add:
+        return D3D12_BLEND_OP_ADD;
+    case RHIBlendOp::Subtract:
+        return D3D12_BLEND_OP_SUBTRACT;
+    case RHIBlendOp::RevSubtract:
+        return D3D12_BLEND_OP_REV_SUBTRACT;
+    case RHIBlendOp::Min:
+        return D3D12_BLEND_OP_MIN;
+    case RHIBlendOp::Max:
+        return D3D12_BLEND_OP_MAX;
+    default:
+        return D3D12_BLEND_OP_ADD;
+    }
+}
+
+DX12Pipeline::~DX12Pipeline()
+{
+    if (!m_pso)
+    {
+        return;
+    }
+
+    if (m_ownerDevice && m_ownerDevice->GetD3DDevice())
+    {
+        ComPtr<ID3D12PipelineState> retiredPso = std::move(m_pso);
+        m_ownerDevice->EnqueueDeferredDeletion(
+            [retiredPso = std::move(retiredPso)]() mutable
+            {
+                retiredPso.Reset();
+            },
+            m_ownerDevice->GetCurrentFrameFenceValue());
+        return;
+    }
+
+    m_pso.Reset();
+}
+
 void DX12Pipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature,
                               const RHIGraphicsPipelineDesc& desc)
 {
@@ -154,9 +226,32 @@ void DX12Pipeline::Initialize(ID3D12Device* device, ID3D12RootSignature* rootSig
 
     // Blend state — default opaque
     psoDesc.BlendState.AlphaToCoverageEnable = FALSE;
-    psoDesc.BlendState.IndependentBlendEnable = FALSE;
-    psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
-    psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    psoDesc.BlendState.IndependentBlendEnable = desc.colorFormats.size() > 1 ? TRUE : FALSE;
+    for (uint32_t i = 0; i < 8; ++i)
+    {
+        psoDesc.BlendState.RenderTarget[i].BlendEnable = FALSE;
+        psoDesc.BlendState.RenderTarget[i].LogicOpEnable = FALSE;
+        psoDesc.BlendState.RenderTarget[i].SrcBlend = D3D12_BLEND_ONE;
+        psoDesc.BlendState.RenderTarget[i].DestBlend = D3D12_BLEND_ZERO;
+        psoDesc.BlendState.RenderTarget[i].BlendOp = D3D12_BLEND_OP_ADD;
+        psoDesc.BlendState.RenderTarget[i].SrcBlendAlpha = D3D12_BLEND_ONE;
+        psoDesc.BlendState.RenderTarget[i].DestBlendAlpha = D3D12_BLEND_ZERO;
+        psoDesc.BlendState.RenderTarget[i].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        psoDesc.BlendState.RenderTarget[i].LogicOp = D3D12_LOGIC_OP_NOOP;
+        psoDesc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    }
+    for (uint32_t i = 0; i < desc.blendAttachments.size() && i < 8; ++i)
+    {
+        const RHIBlendAttachment& attachment = desc.blendAttachments[i];
+        auto& renderTarget = psoDesc.BlendState.RenderTarget[i];
+        renderTarget.BlendEnable = attachment.blendEnable ? TRUE : FALSE;
+        renderTarget.SrcBlend = ToD3D12Blend(attachment.srcColor);
+        renderTarget.DestBlend = ToD3D12Blend(attachment.dstColor);
+        renderTarget.BlendOp = ToD3D12BlendOp(attachment.colorOp);
+        renderTarget.SrcBlendAlpha = ToD3D12Blend(attachment.srcAlpha);
+        renderTarget.DestBlendAlpha = ToD3D12Blend(attachment.dstAlpha);
+        renderTarget.BlendOpAlpha = ToD3D12BlendOp(attachment.alphaOp);
+    }
 
     // Depth stencil — disabled for Phase 2 triangle
     psoDesc.DepthStencilState.DepthEnable = desc.depthTest ? TRUE : FALSE;

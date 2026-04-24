@@ -13,6 +13,8 @@ namespace west::rhi
 struct RHIComputePipelineDesc;
 struct RHIGraphicsPipelineDesc;
 
+class VulkanDevice;
+
 class VulkanPipeline final : public IRHIPipeline
 {
 public:
@@ -28,6 +30,7 @@ public:
     uint64_t GetPSOHash() const override { return m_psoHash; }
 
     // ── Internal ──────────────────────────────────────────────────────
+    void SetOwnerDevice(VulkanDevice* device) { m_ownerDevice = device; }
     VkPipeline GetVkPipeline() const { return m_pipeline; }
     VkPipelineLayout GetVkPipelineLayout() const { return m_pipelineLayout; }
     VkPipelineBindPoint GetVkBindPoint() const
@@ -36,6 +39,7 @@ public:
     }
 
 private:
+    VulkanDevice* m_ownerDevice = nullptr;
     VkDevice m_device = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

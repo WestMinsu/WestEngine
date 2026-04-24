@@ -47,6 +47,10 @@ namespace
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.flags = allowAliasing ? VK_IMAGE_CREATE_ALIAS_BIT : 0;
+    if (desc.dimension == RHITextureDim::TexCube)
+    {
+        imageInfo.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    }
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.format = static_cast<VkFormat>(ToVkFormat(desc.format));
     imageInfo.extent = {desc.width, desc.height, desc.depth};
@@ -65,7 +69,7 @@ void CreateImageView(VulkanDevice* device, VkImage image, const RHITextureDesc& 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType = desc.dimension == RHITextureDim::TexCube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = static_cast<VkFormat>(ToVkFormat(desc.format));
     viewInfo.subresourceRange.aspectMask = IsDepthFormat(desc.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
                                                                       : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -154,7 +158,7 @@ void VulkanTexture::Initialize(VulkanDevice* device, const RHITextureDesc& desc)
 {
     WEST_ASSERT(device != nullptr);
     WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
-    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
+    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D || desc.dimension == RHITextureDim::TexCube);
 
     VulkanMemoryAllocator* allocator = device->GetAllocator();
     WEST_ASSERT(allocator != nullptr);
@@ -184,7 +188,7 @@ void VulkanTexture::InitializeAliased(VulkanDevice* device, const RHITextureDesc
     WEST_ASSERT(device != nullptr);
     WEST_ASSERT(aliasingAllocation);
     WEST_ASSERT(desc.width > 0 && desc.height > 0 && desc.depth > 0);
-    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D);
+    WEST_ASSERT(desc.dimension == RHITextureDim::Tex2D || desc.dimension == RHITextureDim::TexCube);
 
     VulkanMemoryAllocator* allocator = device->GetAllocator();
     WEST_ASSERT(allocator != nullptr);

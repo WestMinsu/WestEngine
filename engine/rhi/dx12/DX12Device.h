@@ -48,7 +48,7 @@ public:
     IRHIQueue* GetQueue(RHIQueueType type) override;
     std::unique_ptr<IRHISwapChain> CreateSwapChain(const RHISwapChainDesc& desc) override;
 
-    BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer) override;
+    BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer, bool writable = false) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
     BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
     void UnregisterBindlessResource(BindlessIndex index) override;
@@ -148,6 +148,7 @@ private:
     uint32_t m_resourceDescriptorSize = 0;
     uint32_t m_samplerDescriptorSize = 0;
     BindlessPool m_bindlessPool;
+    std::vector<uint8> m_bindlessPendingFree;
     std::mutex m_bindlessMutex;
 
     RHIDeviceCaps m_caps{};

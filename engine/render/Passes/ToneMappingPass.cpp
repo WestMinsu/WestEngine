@@ -33,6 +33,10 @@ struct ToneMappingPushConstants
 {
     DescriptorHandle texture;
     DescriptorHandle sampler;
+    float colorGrading[4] = {};
+    float postEffects0[4] = {};
+    float postEffects1[4] = {};
+    uint32_t controls[4] = {};
 };
 
 static_assert(sizeof(ToneMappingPushConstants) == shader::metadata::ToneMapping::PushConstantSizeBytes);
@@ -53,6 +57,11 @@ void ToneMappingPass::Configure(TextureHandle sceneColor, TextureHandle backBuff
 {
     m_sceneColor = sceneColor;
     m_backBuffer = backBuffer;
+}
+
+void ToneMappingPass::SetPostSettings(const PostSettings& settings)
+{
+    m_postSettings = settings;
 }
 
 void ToneMappingPass::Setup(RenderGraphBuilder& builder)
@@ -90,6 +99,22 @@ void ToneMappingPass::Execute(RenderGraphContext& context, rhi::IRHICommandList&
     ToneMappingPushConstants pushConstants{};
     pushConstants.texture.index = sceneColor->GetBindlessIndex();
     pushConstants.sampler.index = m_sampler->GetBindlessIndex();
+    pushConstants.colorGrading[0] = m_postSettings.exposure;
+    pushConstants.colorGrading[1] = m_postSettings.gamma;
+    pushConstants.colorGrading[2] = m_postSettings.maxWhite;
+    pushConstants.colorGrading[3] = m_postSettings.debugSplit;
+    pushConstants.postEffects0[0] = m_postSettings.vibrance;
+    pushConstants.postEffects0[1] = m_postSettings.contrast;
+    pushConstants.postEffects0[2] = m_postSettings.brightness;
+    pushConstants.postEffects0[3] = m_postSettings.saturation;
+    pushConstants.postEffects1[0] = m_postSettings.vignetteStrength;
+    pushConstants.postEffects1[1] = m_postSettings.vignetteRadius;
+    pushConstants.postEffects1[2] = m_postSettings.filmGrainStrength;
+    pushConstants.postEffects1[3] = m_postSettings.chromaticAberration;
+    pushConstants.controls[0] = static_cast<uint32_t>(m_postSettings.toneMappingOperator);
+    pushConstants.controls[1] = static_cast<uint32_t>(m_postSettings.debugView);
+    pushConstants.controls[2] = static_cast<uint32_t>(m_postSettings.debugChannel);
+    pushConstants.controls[3] = m_postSettings.FXAAEnabled ? 1u : 0u;
 
     commandList.SetPipeline(m_pipeline);
     commandList.SetPushConstants(&pushConstants, sizeof(pushConstants));

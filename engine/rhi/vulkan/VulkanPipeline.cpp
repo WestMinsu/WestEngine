@@ -6,7 +6,9 @@
 
 #include "rhi/common/FormatConversion.h"
 #include "rhi/interface/RHIDescriptors.h"
+#include "rhi/vulkan/VulkanDevice.h"
 
+#include <utility>
 #include <vector>
 
 namespace west::rhi
@@ -52,6 +54,54 @@ static VkCompareOp ToVkCompareOp(RHICompareOp op)
     }
 }
 
+static VkBlendFactor ToVkBlendFactor(RHIBlendFactor factor)
+{
+    switch (factor)
+    {
+    case RHIBlendFactor::Zero:
+        return VK_BLEND_FACTOR_ZERO;
+    case RHIBlendFactor::One:
+        return VK_BLEND_FACTOR_ONE;
+    case RHIBlendFactor::SrcAlpha:
+        return VK_BLEND_FACTOR_SRC_ALPHA;
+    case RHIBlendFactor::OneMinusSrcAlpha:
+        return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case RHIBlendFactor::DstAlpha:
+        return VK_BLEND_FACTOR_DST_ALPHA;
+    case RHIBlendFactor::OneMinusDstAlpha:
+        return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case RHIBlendFactor::SrcColor:
+        return VK_BLEND_FACTOR_SRC_COLOR;
+    case RHIBlendFactor::OneMinusSrcColor:
+        return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case RHIBlendFactor::DstColor:
+        return VK_BLEND_FACTOR_DST_COLOR;
+    case RHIBlendFactor::OneMinusDstColor:
+        return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    default:
+        return VK_BLEND_FACTOR_ONE;
+    }
+}
+
+static VkBlendOp ToVkBlendOp(RHIBlendOp op)
+{
+    switch (op)
+    {
+    case RHIBlendOp::Add:
+        return VK_BLEND_OP_ADD;
+    case RHIBlendOp::Subtract:
+        return VK_BLEND_OP_SUBTRACT;
+    case RHIBlendOp::RevSubtract:
+        return VK_BLEND_OP_REVERSE_SUBTRACT;
+    case RHIBlendOp::Min:
+        return VK_BLEND_OP_MIN;
+    case RHIBlendOp::Max:
+        return VK_BLEND_OP_MAX;
+    default:
+        return VK_BLEND_OP_ADD;
+    }
+}
+
 static VkPipelineLayout CreatePipelineLayout(VkDevice device, VkDescriptorSetLayout bindlessSetLayout,
                                              uint32_t pushConstantSizeBytes)
 {
@@ -74,15 +124,44 @@ static VkPipelineLayout CreatePipelineLayout(VkDevice device, VkDescriptorSetLay
 
 VulkanPipeline::~VulkanPipeline()
 {
-    if (m_pipeline && m_device)
+    if (m_device == VK_NULL_HANDLE)
     {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
+        return;
     }
-    if (m_pipelineLayout && m_device)
+
+    VkPipeline retiredPipeline = std::exchange(m_pipeline, VK_NULL_HANDLE);
+    VkPipelineLayout retiredPipelineLayout = std::exchange(m_pipelineLayout, VK_NULL_HANDLE);
+    if (retiredPipeline == VK_NULL_HANDLE && retiredPipelineLayout == VK_NULL_HANDLE)
     {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
+        return;
+    }
+
+    if (m_ownerDevice && m_ownerDevice->GetVkDevice() != VK_NULL_HANDLE)
+    {
+        const VkDevice device = m_device;
+        m_ownerDevice->EnqueueDeferredDeletion(
+            [device, retiredPipeline, retiredPipelineLayout]()
+            {
+                if (retiredPipeline != VK_NULL_HANDLE)
+                {
+                    vkDestroyPipeline(device, retiredPipeline, nullptr);
+                }
+                if (retiredPipelineLayout != VK_NULL_HANDLE)
+                {
+                    vkDestroyPipelineLayout(device, retiredPipelineLayout, nullptr);
+                }
+            },
+            m_ownerDevice->GetCurrentFrameFenceValue());
+        return;
+    }
+
+    if (retiredPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(m_device, retiredPipeline, nullptr);
+    }
+    if (retiredPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(m_device, retiredPipelineLayout, nullptr);
     }
 }
 
@@ -92,6 +171,7 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
     WEST_ASSERT(device != VK_NULL_HANDLE);
     WEST_ASSERT(desc.pushConstantSizeBytes <= kMaxPushConstantSizeBytes);
     WEST_ASSERT((desc.pushConstantSizeBytes % sizeof(uint32_t)) == 0);
+    (void)swapChainFormat;
     m_device = device;
     m_type = RHIPipelineType::Graphics;
     m_pipelineLayout = CreatePipelineLayout(device, bindlessSetLayout, desc.pushConstantSizeBytes);
@@ -197,30 +277,57 @@ void VulkanPipeline::Initialize(VkDevice device, const RHIGraphicsPipelineDesc& 
     depthStencil.stencilTestEnable = VK_FALSE;
 
     // ── Color Blend ──
-    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.blendEnable = VK_FALSE;
-    colorBlendAttachment.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments(static_cast<uint32_t>(desc.colorFormats.size()));
+    for (VkPipelineColorBlendAttachmentState& colorBlendAttachment : colorBlendAttachments)
+    {
+        colorBlendAttachment.blendEnable = VK_FALSE;
+        colorBlendAttachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
+    for (uint32_t i = 0; i < desc.blendAttachments.size() && i < colorBlendAttachments.size(); ++i)
+    {
+        const RHIBlendAttachment& attachment = desc.blendAttachments[i];
+        VkPipelineColorBlendAttachmentState& colorBlendAttachment = colorBlendAttachments[i];
+        colorBlendAttachment.blendEnable = attachment.blendEnable ? VK_TRUE : VK_FALSE;
+        colorBlendAttachment.srcColorBlendFactor = ToVkBlendFactor(attachment.srcColor);
+        colorBlendAttachment.dstColorBlendFactor = ToVkBlendFactor(attachment.dstColor);
+        colorBlendAttachment.colorBlendOp = ToVkBlendOp(attachment.colorOp);
+        colorBlendAttachment.srcAlphaBlendFactor = ToVkBlendFactor(attachment.srcAlpha);
+        colorBlendAttachment.dstAlphaBlendFactor = ToVkBlendFactor(attachment.dstAlpha);
+        colorBlendAttachment.alphaBlendOp = ToVkBlendOp(attachment.alphaOp);
+    }
 
     VkPipelineColorBlendStateCreateInfo colorBlend{};
     colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     colorBlend.logicOpEnable = VK_FALSE;
-    colorBlend.attachmentCount = 1;
-    colorBlend.pAttachments = &colorBlendAttachment;
+    colorBlend.attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size());
+    colorBlend.pAttachments = colorBlendAttachments.data();
 
     // ── Dynamic Rendering (Vulkan 1.3) ──
-    VkFormat colorFormat = swapChainFormat;
+    std::vector<VkFormat> colorFormats;
     if (!desc.colorFormats.empty())
     {
-        colorFormat = static_cast<VkFormat>(ToVkFormat(desc.colorFormats[0]));
+        colorFormats.reserve(desc.colorFormats.size());
+        for (const RHIFormat colorFormat : desc.colorFormats)
+        {
+            colorFormats.push_back(static_cast<VkFormat>(ToVkFormat(colorFormat)));
+        }
     }
 
     VkPipelineRenderingCreateInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &colorFormat;
-    renderingInfo.depthAttachmentFormat = VK_FORMAT_UNDEFINED;
+    renderingInfo.colorAttachmentCount = static_cast<uint32_t>(colorFormats.size());
+    renderingInfo.pColorAttachmentFormats = colorFormats.data();
+    renderingInfo.depthAttachmentFormat =
+        desc.depthFormat != RHIFormat::Unknown ? static_cast<VkFormat>(ToVkFormat(desc.depthFormat))
+                                               : VK_FORMAT_UNDEFINED;
     renderingInfo.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
 
     // ── Create Pipeline ──

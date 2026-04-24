@@ -64,6 +64,7 @@ public:
 private:
     ComPtr<ID3D12CommandAllocator> m_allocator;
     ComPtr<ID3D12GraphicsCommandList6> m_cmdList;
+    ComPtr<ID3D12CommandSignature> m_drawIndexedIndirectSignature;
     ID3D12DescriptorHeap* m_resourceDescriptorHeap = nullptr;
     ID3D12DescriptorHeap* m_samplerDescriptorHeap = nullptr;
     RHIPipelineType m_currentPipelineType = RHIPipelineType::Graphics;

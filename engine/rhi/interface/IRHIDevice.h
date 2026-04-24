@@ -53,7 +53,7 @@ public:
     virtual std::unique_ptr<IRHISwapChain> CreateSwapChain(const RHISwapChainDesc& desc) = 0;
 
     // ── Bindless ──────────────────────────────────────────────────────
-    virtual BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer) = 0;
+    virtual BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer, bool writable = false) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHITexture* texture) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHISampler* sampler) = 0;
     virtual void UnregisterBindlessResource(BindlessIndex index) = 0;

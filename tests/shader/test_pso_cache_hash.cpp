@@ -116,7 +116,7 @@ public:
         return nullptr;
     }
 
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override
     {
         return rhi::kInvalidBindlessIndex;
     }

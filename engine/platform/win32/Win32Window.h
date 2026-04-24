@@ -36,12 +36,14 @@ public:
     {
         return m_height;
     }
+    void SetTitle(std::string_view title) override;
 
 private:
     void* m_hwnd = nullptr; // HWND stored as void* to avoid header leak
     uint32 m_width = 0;
     uint32 m_height = 0;
     bool m_shouldClose = false;
+    std::string m_title;
 
     std::wstring m_className;
 

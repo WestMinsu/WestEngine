@@ -183,6 +183,11 @@ void DX12SwapChain::Resize(uint32_t width, uint32_t height)
         return; // Minimized window
     }
 
+    if (m_device)
+    {
+        m_device->WaitIdle();
+    }
+
     ReleaseBackBuffers();
 
     DXGI_SWAP_CHAIN_DESC1 desc{};

@@ -48,7 +48,7 @@ public:
     IRHIQueue* GetQueue(RHIQueueType type) override;
     std::unique_ptr<IRHISwapChain> CreateSwapChain(const RHISwapChainDesc& desc) override;
 
-    BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer) override;
+    BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer, bool writable = false) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
     BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
     void UnregisterBindlessResource(BindlessIndex index) override;
@@ -196,6 +196,7 @@ private:
     float m_maxSamplerAnisotropy = 1.0f;
     BindlessPool m_bindlessPool;
     std::vector<BindlessDescriptorKind> m_bindlessDescriptorKinds;
+    std::vector<uint8_t> m_bindlessPendingFree;
     std::mutex m_bindlessMutex;
 
     PFN_vkGetDescriptorSetLayoutSizeEXT m_vkGetDescriptorSetLayoutSizeEXT = nullptr;

@@ -9,6 +9,22 @@ if(WEST_HAS_TRACY)
     find_package(Tracy CONFIG REQUIRED)
 endif()
 
+# ── Dear ImGui ───────────────────────────────────────────────────────────────
+# Phase 7: runtime editor/profiler GUI bootstrap.
+find_package(imgui QUIET CONFIG)
+if(NOT TARGET imgui::imgui)
+    find_package(ImGui QUIET CONFIG)
+endif()
+if(TARGET imgui::imgui)
+    set(WEST_HAS_IMGUI TRUE)
+    set(WEST_IMGUI_TARGET imgui::imgui CACHE INTERNAL "WestEngine Dear ImGui target")
+elseif(TARGET ImGui::ImGui)
+    set(WEST_HAS_IMGUI TRUE)
+    set(WEST_IMGUI_TARGET ImGui::ImGui CACHE INTERNAL "WestEngine Dear ImGui target")
+else()
+    message(FATAL_ERROR "Dear ImGui package was not found via vcpkg. Install the manifest dependency 'imgui'.")
+endif()
+
 # ── DirectX 12 ──────────────────────────────────────────────────────────────
 # Phase 1: DX12 backend. directx-headers provides modern D3D12 headers.
 if(WIN32 AND WEST_HAS_DX12)
@@ -34,3 +50,12 @@ if(WEST_HAS_VULKAN)
     find_package(VulkanMemoryAllocator CONFIG REQUIRED)
     set(WEST_HAS_VMA TRUE)
 endif()
+
+# ── Asset Import / Image Decode ─────────────────────────────────────────────
+# Phase 6 static-scene bring-up via temporary OBJ/FBX ingestion.
+find_package(assimp CONFIG REQUIRED)
+find_package(Stb REQUIRED)
+
+# ── Canonical glTF Ingestion ────────────────────────────────────────────────
+# Phase 6 Slice C: single-file cgltf parser for the long-term static-scene path.
+find_path(CGLTF_INCLUDE_DIRS NAMES cgltf.h REQUIRED)

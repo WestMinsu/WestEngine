@@ -136,6 +136,16 @@ void DX12CommandList::Initialize(ID3D12Device* device, RHIQueueType type, ID3D12
     WEST_HR_CHECK(rawCmdList.As(&m_cmdList));
     WEST_HR_CHECK(m_cmdList->Close()); // Close so Begin() can Reset+Reopen
 
+    D3D12_INDIRECT_ARGUMENT_DESC indirectArgument{};
+    indirectArgument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+
+    D3D12_COMMAND_SIGNATURE_DESC signatureDesc{};
+    signatureDesc.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+    signatureDesc.NumArgumentDescs = 1;
+    signatureDesc.pArgumentDescs = &indirectArgument;
+    WEST_HR_CHECK(device->CreateCommandSignature(&signatureDesc, nullptr,
+                                                 IID_PPV_ARGS(&m_drawIndexedIndirectSignature)));
+
     WEST_LOG_VERBOSE(LogCategory::RHI, "DX12 CommandList created.");
 }
 
@@ -232,22 +242,46 @@ void DX12CommandList::SetScissor(int32_t x, int32_t y, uint32_t w, uint32_t h)
 
 void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc)
 {
-    // Phase 1: Use traditional OMSetRenderTargets + Clear
-    // Phase 5+: Switch to ID3D12GraphicsCommandList4::BeginRenderPass
+    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> rtvHandles;
+    rtvHandles.reserve(desc.colorAttachments.size());
 
-    // Phase 1: ClearRenderTargetView — single RTV, no depth
-    if (!desc.colorAttachments.empty() && desc.colorAttachments[0].texture)
+    for (const RHIColorAttachment& colorAttach : desc.colorAttachments)
     {
-        const auto& colorAttach = desc.colorAttachments[0];
+        if (!colorAttach.texture)
+        {
+            continue;
+        }
+
         auto* dx12Tex = static_cast<DX12Texture*>(colorAttach.texture);
         D3D12_CPU_DESCRIPTOR_HANDLE rtv = dx12Tex->GetRTV();
+        rtvHandles.push_back(rtv);
 
         if (colorAttach.loadOp == RHILoadOp::Clear)
         {
             m_cmdList->ClearRenderTargetView(rtv, colorAttach.clearColor, 0, nullptr);
         }
+    }
 
-        m_cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{};
+    if (desc.depthAttachment.texture)
+    {
+        auto* dx12Depth = static_cast<DX12Texture*>(desc.depthAttachment.texture);
+        dsvHandle = dx12Depth->GetDSV();
+        dsvPtr = &dsvHandle;
+
+        if (desc.depthAttachment.loadOp == RHILoadOp::Clear)
+        {
+            m_cmdList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, desc.depthAttachment.clearDepth,
+                                             desc.depthAttachment.clearStencil, 0, nullptr);
+        }
+    }
+
+    if (!rtvHandles.empty() || dsvPtr)
+    {
+        m_cmdList->OMSetRenderTargets(static_cast<UINT>(rtvHandles.size()),
+                                      rtvHandles.empty() ? nullptr : rtvHandles.data(),
+                                      FALSE, dsvPtr);
     }
 }
 
@@ -326,11 +360,23 @@ void DX12CommandList::DrawIndexed(uint32_t indexCount, uint32_t instanceCount, u
     m_cmdList->DrawIndexedInstanced(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 }
 
-void DX12CommandList::DrawIndexedIndirectCount(IRHIBuffer* /*argsBuffer*/, uint64_t /*argsOffset*/,
-                                               IRHIBuffer* /*countBuffer*/, uint64_t /*countOffset*/,
-                                               uint32_t /*maxDrawCount*/, uint32_t /*stride*/)
+void DX12CommandList::DrawIndexedIndirectCount(IRHIBuffer* argsBuffer, uint64_t argsOffset,
+                                               IRHIBuffer* countBuffer, uint64_t countOffset,
+                                               uint32_t maxDrawCount, uint32_t stride)
 {
-    // TODO(minsu): Phase 6 — ExecuteIndirect
+    WEST_ASSERT(argsBuffer != nullptr);
+    WEST_ASSERT(countBuffer != nullptr);
+    WEST_ASSERT(m_drawIndexedIndirectSignature != nullptr);
+    WEST_ASSERT(stride == sizeof(D3D12_DRAW_INDEXED_ARGUMENTS));
+
+    auto* dx12ArgsBuffer = static_cast<DX12Buffer*>(argsBuffer);
+    auto* dx12CountBuffer = static_cast<DX12Buffer*>(countBuffer);
+    WEST_ASSERT(dx12ArgsBuffer != nullptr);
+    WEST_ASSERT(dx12CountBuffer != nullptr);
+
+    m_cmdList->ExecuteIndirect(m_drawIndexedIndirectSignature.Get(), maxDrawCount,
+                               dx12ArgsBuffer->GetD3DResource(), argsOffset,
+                               dx12CountBuffer->GetD3DResource(), countOffset);
 }
 
 void DX12CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)

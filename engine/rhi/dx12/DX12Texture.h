@@ -54,13 +54,19 @@ public:
     {
         return m_rtvHandle;
     }
+    D3D12_CPU_DESCRIPTOR_HANDLE GetDSV() const
+    {
+        return m_dsvHandle;
+    }
 
 private:
     D3D12MA::Allocation* m_allocation = nullptr;
     std::shared_ptr<D3D12MA::Allocation> m_aliasingAllocation;
     ID3D12Resource* m_resource = nullptr; // Owned by allocation, non-owning for swapchain
     ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
+    ComPtr<ID3D12DescriptorHeap> m_dsvHeap;
     D3D12_CPU_DESCRIPTOR_HANDLE m_rtvHandle = {};
+    D3D12_CPU_DESCRIPTOR_HANDLE m_dsvHandle = {};
     RHITextureDesc m_desc{};
     BindlessIndex m_bindlessIndex = kInvalidBindlessIndex;
     DX12Device* m_device = nullptr;

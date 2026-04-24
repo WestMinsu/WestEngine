@@ -157,7 +157,7 @@ public:
         return nullptr;
     }
 
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override
     {
         return rhi::kInvalidBindlessIndex;
     }
@@ -281,7 +281,7 @@ public:
 
     rhi::IRHIQueue* GetQueue(rhi::RHIQueueType) override { return nullptr; }
     std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override { return nullptr; }
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
     void UnregisterBindlessResource(rhi::BindlessIndex) override {}
@@ -432,7 +432,7 @@ public:
     }
 
     std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override { return nullptr; }
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
     void UnregisterBindlessResource(rhi::BindlessIndex) override {}

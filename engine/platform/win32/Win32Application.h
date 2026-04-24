@@ -7,9 +7,13 @@
 #include "core/Timer.h"
 #include "platform/IApplication.h"
 #include "platform/win32/Win32Window.h"
+#include "render/Passes/BokehDOFPass.h"
+#include "render/Passes/ToneMappingPass.h"
 #include "render/RenderGraph/RenderGraphResource.h"
 #include "rhi/interface/RHIEnums.h"
 
+#include <array>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -31,14 +35,31 @@ namespace west::shader
 class PSOCache;
 } // namespace west::shader
 
+namespace west::scene
+{
+class Camera;
+class SceneAsset;
+} // namespace west::scene
+
 namespace west::render
 {
 class CommandListPool;
-class ForwardTexturedQuadPass;
+class DeferredLightingPass;
+class GBufferPass;
+class GPUDrivenCullingPass;
 class RenderGraph;
-class ToneMappingPass;
+class SSAOPass;
+class ShadowMapPass;
+class BufferCopyPass;
 class TransientResourcePool;
 } // namespace west::render
+
+namespace west::editor
+{
+class FrameTelemetry;
+class ImGuiPass;
+class ImGuiRenderer;
+} // namespace west::editor
 
 namespace west
 {
@@ -61,13 +82,45 @@ public:
     }
 
 private:
+    struct SceneMeshResource
+    {
+        std::unique_ptr<rhi::IRHIBuffer> ownedVertexBuffer;
+        std::unique_ptr<rhi::IRHIBuffer> ownedIndexBuffer;
+        rhi::IRHIBuffer* vertexBuffer = nullptr;
+        rhi::IRHIBuffer* indexBuffer = nullptr;
+        uint64 vertexOffsetBytes = 0;
+        uint64 indexOffsetBytes = 0;
+        uint32 indexCount = 0;
+        uint32 materialIndex = 0;
+    };
+
+    struct SceneTextureResource
+    {
+        std::filesystem::path sourcePath;
+        std::unique_ptr<rhi::IRHITexture> texture;
+    };
+
     void InitializeRHI();
     void InitializeTexturedQuad();
+    void InitializeScene();
+    void InitializeImGui();
+    void InitializeImageBasedLighting(rhi::IRHICommandList& uploadCommandList,
+                                      std::vector<std::unique_ptr<rhi::IRHIBuffer>>& stagingBuffers);
+    void InitializeFreeLookCamera();
     void RunCommandRecordingBenchmark();
     void ShutdownRHI();
     void RenderFrame();
     void ResizeSwapChain(uint32 width, uint32 height);
-    void EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIResourceState initialState);
+    void EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIResourceState initialState, uint32 frameIndex);
+    void UpdateFreeLookCamera(float deltaSeconds, bool blockMouseLook);
+    void UpdateRuntimePostControls(bool blockKeyboardShortcuts);
+    void BuildTelemetryOverlay();
+    void BuildImGuiControlPanel();
+    [[nodiscard]] bool ConsumeKeyPress(int virtualKey);
+    void ApplyPostPreset(uint32 presetIndex, bool logChange);
+    void LogRuntimePostControlsHelp() const;
+    void LogRuntimePostState(const char* reason) const;
+    void UpdateRuntimePostWindowTitle() const;
 
     // ── Platform ──────────────────────────────────────────────────────
     std::unique_ptr<Win32Window> m_window;
@@ -77,6 +130,14 @@ private:
     bool m_enableValidation = false;
     bool m_enableDX12GPUBasedValidation = false;
     bool m_enableGPUCrashDiag = false;
+    bool m_enableSceneCache = true;
+    bool m_enableSceneMerge = true;
+    bool m_enableSceneBatchUpload = true;
+    bool m_enableTextureCache = true;
+    bool m_enableTextureBatchUpload = true;
+    bool m_enableGPUDrivenScene = true;
+    bool m_useCanonicalGltfScene = false;
+    std::string m_baseWindowTitle = "WestEngine";
 
     // ── RHI ───────────────────────────────────────────────────────────
     rhi::RHIBackend m_backend = rhi::RHIBackend::DX12;
@@ -100,14 +161,106 @@ private:
     std::unique_ptr<rhi::IRHIBuffer> m_quadIB;
     std::unique_ptr<rhi::IRHITexture> m_checkerTexture;
     std::unique_ptr<rhi::IRHISampler> m_checkerSampler;
+    std::unique_ptr<rhi::IRHISampler> m_materialStableSampler;
+    std::unique_ptr<rhi::IRHISampler> m_shadowSampler;
+    std::unique_ptr<rhi::IRHISampler> m_iblSampler;
     std::unique_ptr<shader::PSOCache> m_psoCache;
     std::unique_ptr<render::CommandListPool> m_commandListPool;
     std::unique_ptr<render::RenderGraph> m_frameGraph;
     std::unique_ptr<render::TransientResourcePool> m_transientResourcePool;
-    std::unique_ptr<render::ForwardTexturedQuadPass> m_forwardTexturedQuadPass;
+    std::unique_ptr<render::ShadowMapPass> m_shadowMapPass;
+    std::unique_ptr<render::GBufferPass> m_gBufferPass;
+    std::unique_ptr<render::GPUDrivenCullingPass> m_gpuDrivenCullingPass;
+    std::unique_ptr<render::BufferCopyPass> m_gpuDrivenCountResetPass;
+    std::unique_ptr<render::BufferCopyPass> m_gpuDrivenCountReadbackPass;
+    std::unique_ptr<render::SSAOPass> m_ssaoPass;
+    std::unique_ptr<render::DeferredLightingPass> m_deferredLightingPass;
+    std::unique_ptr<render::BokehDOFPass> m_bokehDOFPass;
     std::unique_ptr<render::ToneMappingPass> m_toneMappingPass;
+    std::unique_ptr<editor::FrameTelemetry> m_frameTelemetry;
+    std::unique_ptr<editor::ImGuiRenderer> m_imguiRenderer;
+    std::unique_ptr<editor::ImGuiPass> m_imguiPass;
+    std::unique_ptr<scene::Camera> m_sceneCamera;
+    std::unique_ptr<scene::SceneAsset> m_sceneAsset;
+    std::unique_ptr<rhi::IRHIBuffer> m_sceneVertexBuffer;
+    std::unique_ptr<rhi::IRHIBuffer> m_sceneIndexBuffer;
+    std::unique_ptr<rhi::IRHIBuffer> m_sceneDrawBuffer;
+    std::unique_ptr<rhi::IRHIBuffer> m_gpuDrivenCountResetBuffer;
+    std::vector<std::unique_ptr<rhi::IRHIBuffer>> m_gpuDrivenIndirectArgsBuffers;
+    std::vector<std::unique_ptr<rhi::IRHIBuffer>> m_gpuDrivenIndirectCountBuffers;
+    std::vector<std::unique_ptr<rhi::IRHIBuffer>> m_gpuDrivenCountReadbackBuffers;
+    std::vector<SceneMeshResource> m_sceneMeshResources;
+    std::vector<SceneTextureResource> m_sceneTextureResources;
+    std::unique_ptr<rhi::IRHITexture> m_iblPrefilteredTexture;
+    std::unique_ptr<rhi::IRHITexture> m_iblIrradianceTexture;
+    std::unique_ptr<rhi::IRHITexture> m_iblBrdfLutTexture;
+    std::vector<std::unique_ptr<rhi::IRHIBuffer>> m_frameConstantsBuffers;
+    std::unique_ptr<rhi::IRHIBuffer> m_materialBuffer;
+    std::vector<bool> m_gpuDrivenReadbackPending;
+    uint32 m_sceneDrawCount = 0;
+    uint32 m_lastGPUDrivenVisibleCount = 0;
+    uint32 m_lastLoggedVisibleCount = UINT32_MAX;
+    bool m_gpuDrivenAvailable = false;
+    bool m_gpuDrivenVisibilityLogged = false;
+    std::array<float, 3> m_freeLookPosition = {0.0f, 0.0f, 0.0f};
+    float m_freeLookYawRadians = 0.0f;
+    float m_freeLookPitchRadians = 0.0f;
+    bool m_hasLastMousePosition = false;
+    bool m_runtimeTexturesEnabled = true;
+    bool m_runtimeShadowsEnabled = true;
+    bool m_runtimeSSAOEnabled = true;
+    bool m_runtimeIBLEnabled = true;
+    bool m_runtimeAlphaDiscardEnabled = true;
+    bool m_runtimeBokehEnabled = false;
+    bool m_imguiVisible = true;
+    bool m_imguiCaptureInput = true;
+    bool m_imguiWantsMouseCapture = false;
+    bool m_imguiWantsKeyboardCapture = false;
+    long m_lastMouseX = 0;
+    long m_lastMouseY = 0;
+    float m_runtimeLightIntensity = 5.2f;
+    float m_runtimeLightElevationDegrees = 67.5f;
+    float m_runtimeLightAzimuthDegrees = 35.5f;
+    float m_runtimeEnvironmentIntensity = 1.0f;
+    float m_runtimeDiffuseWeight = 1.0f;
+    float m_runtimeSpecularWeight = 1.0f;
+    float m_runtimeMetallicScale = 1.0f;
+    float m_runtimeRoughnessScale = 1.0f;
+    float m_runtimeSSAORadius = 0.10f;
+    float m_runtimeSSAOBias = 0.025f;
+    int m_runtimeSSAOSampleCount = 16;
+    float m_runtimeSSAOPower = 2.0f;
+    float m_runtimeShadowBias = 0.0012f;
+    float m_runtimeShadowNormalBias = 0.0125f;
+    float m_runtimeCameraMoveSpeed = 12.0f;
+    float m_runtimeCameraMouseSensitivity = 0.0035f;
+    float m_runtimeCameraFovDegrees = 60.0f;
+    float m_runtimeCameraNearPlane = 0.1f;
+    float m_runtimeCameraFarPlane = 500.0f;
+    uint32 m_runtimePostPresetIndex = 0;
+    bool m_runtimePostPresetDirty = false;
+    std::array<bool, 256> m_runtimeKeyState{};
+    render::ToneMappingPass::PostSettings m_runtimePostSettings{};
+    render::BokehDOFPass::Settings m_runtimeBokehSettings{};
     render::TextureHandle m_frameBackBufferHandle{};
+    render::TextureHandle m_frameShadowMapHandle{};
+    render::TextureHandle m_frameGBufferPositionHandle{};
+    render::TextureHandle m_frameGBufferNormalHandle{};
+    render::TextureHandle m_frameGBufferAlbedoHandle{};
+    render::TextureHandle m_frameAmbientOcclusionHandle{};
+    render::TextureHandle m_frameSceneDepthHandle{};
     render::TextureHandle m_frameSceneColorHandle{};
+    render::TextureHandle m_frameBokehDOFHandle{};
+    render::TextureHandle m_frameIBLPrefilteredHandle{};
+    render::TextureHandle m_frameIBLIrradianceHandle{};
+    render::TextureHandle m_frameIBLBrdfLutHandle{};
+    render::BufferHandle m_frameConstantsBufferHandle{};
+    render::BufferHandle m_frameMaterialBufferHandle{};
+    render::BufferHandle m_frameSceneDrawBufferHandle{};
+    render::BufferHandle m_frameGPUDrivenCountResetBufferHandle{};
+    render::BufferHandle m_frameGPUDrivenIndirectArgsHandle{};
+    render::BufferHandle m_frameGPUDrivenIndirectCountHandle{};
+    render::BufferHandle m_frameGPUDrivenReadbackHandle{};
     uint32 m_frameGraphWidth = 0;
     uint32 m_frameGraphHeight = 0;
     rhi::RHIFormat m_frameGraphBackBufferFormat = rhi::RHIFormat::Unknown;

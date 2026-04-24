@@ -11,11 +11,13 @@
 namespace west::rhi
 {
 
+class DX12Device;
+
 class DX12Pipeline final : public IRHIPipeline
 {
 public:
     DX12Pipeline() = default;
-    ~DX12Pipeline() override = default;
+    ~DX12Pipeline() override;
 
     /// Create a graphics PSO with the given desc.
     void Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature, const RHIGraphicsPipelineDesc& desc);
@@ -26,11 +28,13 @@ public:
     uint64_t GetPSOHash() const override { return m_psoHash; }
 
     // ── Internal ──────────────────────────────────────────────────────
+    void SetOwnerDevice(DX12Device* device) { m_ownerDevice = device; }
     ID3D12PipelineState* GetPipelineState() const { return m_pso.Get(); }
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
     D3D_PRIMITIVE_TOPOLOGY GetPrimitiveTopology() const { return m_primitiveTopology; }
 
 private:
+    DX12Device* m_ownerDevice = nullptr;
     ComPtr<ID3D12PipelineState> m_pso;
     ID3D12RootSignature* m_rootSignature = nullptr;
     D3D_PRIMITIVE_TOPOLOGY m_primitiveTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;

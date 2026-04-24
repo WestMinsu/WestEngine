@@ -97,7 +97,7 @@ void DX12Buffer::Initialize(DX12Device* device, const RHIBufferDesc& desc)
 
     // Resource flags from usage
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    if (HasFlag(desc.usage, RHIBufferUsage::StorageBuffer))
+    if (HasFlag(desc.usage, RHIBufferUsage::StorageBuffer) && heapType == D3D12_HEAP_TYPE_DEFAULT)
     {
         resourceDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     }
