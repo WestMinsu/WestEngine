@@ -33,11 +33,11 @@ public:
     void ConfigureTargets(TextureHandle worldPosition, TextureHandle normalRoughness, TextureHandle albedoMetallic,
                           TextureHandle sceneDepth);
     void SetMaterialSampler(rhi::IRHISampler* sampler);
+    void SetSharedGeometry(BufferHandle sharedVertexBuffer, BufferHandle sharedIndexBuffer);
     void SetSceneData(std::span<const StaticMeshDrawItem> draws, BufferHandle frameBuffer,
                       BufferHandle materialBuffer, BufferHandle drawBuffer);
     void SetIndirectBuffers(BufferHandle indirectArgs, BufferHandle indirectCount,
-                            rhi::IRHIBuffer* sharedVertexBuffer, rhi::IRHIBuffer* sharedIndexBuffer,
-                            uint32_t maxDrawCount);
+                            BufferHandle sharedVertexBuffer, BufferHandle sharedIndexBuffer, uint32_t maxDrawCount);
     void DisableIndirect();
 
     void Setup(RenderGraphBuilder& builder) override;
@@ -68,8 +68,8 @@ private:
     BufferHandle m_drawBuffer{};
     BufferHandle m_indirectArgs{};
     BufferHandle m_indirectCount{};
-    rhi::IRHIBuffer* m_sharedVertexBuffer = nullptr;
-    rhi::IRHIBuffer* m_sharedIndexBuffer = nullptr;
+    BufferHandle m_sharedVertexBuffer{};
+    BufferHandle m_sharedIndexBuffer{};
     uint32_t m_maxDrawCount = 0;
     bool m_useIndirect = false;
     std::vector<StaticMeshDrawItem> m_draws;

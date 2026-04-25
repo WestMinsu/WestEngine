@@ -6,6 +6,7 @@
 
 #include "rhi/vulkan/VulkanBuffer.h"
 #include "rhi/vulkan/VulkanPipeline.h"
+#include "rhi/vulkan/VulkanTimestampQueryPool.h"
 #include "rhi/vulkan/VulkanTexture.h"
 #include "rhi/common/FormatConversion.h"
 
@@ -513,9 +514,35 @@ void VulkanCommandList::CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, c
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 }
 
-void VulkanCommandList::WriteTimestamp(IRHIBuffer* /*queryBuffer*/, uint32_t /*index*/)
+void VulkanCommandList::ResetTimestampQueries(IRHITimestampQueryPool* queryPool, uint32_t firstQuery,
+                                              uint32_t queryCount)
 {
-    // TODO(minsu): Phase 7
+    if (queryCount == 0)
+    {
+        return;
+    }
+
+    auto* vkQueryPool = static_cast<VulkanTimestampQueryPool*>(queryPool);
+    WEST_ASSERT(vkQueryPool != nullptr);
+    WEST_ASSERT(firstQuery + queryCount <= vkQueryPool->GetDesc().queryCount);
+
+    vkCmdResetQueryPool(m_cmdBuffer, vkQueryPool->GetVkQueryPool(), firstQuery, queryCount);
+}
+
+void VulkanCommandList::WriteTimestamp(IRHITimestampQueryPool* queryPool, uint32_t index)
+{
+    auto* vkQueryPool = static_cast<VulkanTimestampQueryPool*>(queryPool);
+    WEST_ASSERT(vkQueryPool != nullptr);
+    WEST_ASSERT(index < vkQueryPool->GetDesc().queryCount);
+
+    vkCmdWriteTimestamp2(m_cmdBuffer, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         vkQueryPool->GetVkQueryPool(), index);
+}
+
+void VulkanCommandList::ResolveTimestampQueries(IRHITimestampQueryPool* /*queryPool*/, uint32_t /*firstQuery*/,
+                                                uint32_t /*queryCount*/)
+{
+    // Vulkan query results are read directly after the frame fence is complete.
 }
 
 } // namespace west::rhi

@@ -11,6 +11,7 @@
 #include "editor/ImGuiPass.h"
 #include "editor/ImGuiRenderer.h"
 #include "editor/Profiler/FrameTelemetry.h"
+#include "editor/Profiler/GPUTimerManager.h"
 #include "platform/win32/Win32Headers.h"
 #include "render/Passes/BokehDOFPass.h"
 #include "render/Passes/BufferCopyPass.h"
@@ -1225,6 +1226,8 @@ void Win32Application::InitializeImGui()
     WEST_ASSERT(m_psoCache != nullptr);
 
     m_frameTelemetry = std::make_unique<editor::FrameTelemetry>();
+    m_gpuTimerManager = std::make_unique<editor::GPUTimerManager>();
+    m_gpuTimerManager->Initialize(*m_rhiDevice, kMaxFramesInFlight);
     m_imguiRenderer = std::make_unique<editor::ImGuiRenderer>(*m_rhiDevice, *m_psoCache, m_backend, kMaxFramesInFlight);
     m_imguiPass = std::make_unique<editor::ImGuiPass>(*m_imguiRenderer);
 }
@@ -2193,7 +2196,8 @@ void Win32Application::InitializeScene()
 
             auto indirectArgsBuffer = m_rhiDevice->CreateBuffer(indirectArgsDesc);
             WEST_CHECK(indirectArgsBuffer != nullptr, "Failed to create GPU-driven indirect args buffer");
-            WEST_CHECK(m_rhiDevice->RegisterBindlessResource(indirectArgsBuffer.get(), true) !=
+            WEST_CHECK(m_rhiDevice->RegisterBindlessResource(indirectArgsBuffer.get(),
+                                                             rhi::RHIBindlessBufferView::ReadWrite) !=
                            rhi::kInvalidBindlessIndex,
                        "Failed to register GPU-driven indirect args buffer");
             m_gpuDrivenIndirectArgsBuffers.push_back(std::move(indirectArgsBuffer));
@@ -2208,7 +2212,8 @@ void Win32Application::InitializeScene()
 
             auto indirectCountBuffer = m_rhiDevice->CreateBuffer(indirectCountDesc);
             WEST_CHECK(indirectCountBuffer != nullptr, "Failed to create GPU-driven indirect count buffer");
-            WEST_CHECK(m_rhiDevice->RegisterBindlessResource(indirectCountBuffer.get(), true) !=
+            WEST_CHECK(m_rhiDevice->RegisterBindlessResource(indirectCountBuffer.get(),
+                                                             rhi::RHIBindlessBufferView::ReadWrite) !=
                            rhi::kInvalidBindlessIndex,
                        "Failed to register GPU-driven indirect count buffer");
             m_gpuDrivenIndirectCountBuffers.push_back(std::move(indirectCountBuffer));
@@ -2698,7 +2703,7 @@ void Win32Application::BuildTelemetryOverlay()
 {
     WEST_ASSERT(m_frameTelemetry != nullptr);
 
-    const editor::FrameTelemetryStats& stats = m_frameTelemetry->GetStats();
+    const editor::FrameTelemetryStats& stats = m_frameTelemetry->GetDisplayStats();
     const editor::RenderGraphEvidence& evidence = m_frameTelemetry->GetRenderGraphEvidence();
     const rhi::RHIDeviceCaps caps = m_rhiDevice != nullptr ? m_rhiDevice->GetCapabilities() : rhi::RHIDeviceCaps{};
 
@@ -2709,7 +2714,7 @@ void Win32Application::BuildTelemetryOverlay()
 #endif
 
     ImGui::SetNextWindowPos(ImVec2(492.0f, 16.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(520.0f, 520.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 330.0f), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("WestEngine Telemetry", nullptr, ImGuiWindowFlags_NoCollapse))
     {
@@ -2717,44 +2722,34 @@ void Win32Application::BuildTelemetryOverlay()
         return;
     }
 
-    const ImVec4 goodColor = ImVec4(0.42f, 0.86f, 0.52f, 1.0f);
     const ImVec4 warningColor = ImVec4(0.95f, 0.72f, 0.28f, 1.0f);
-    const ImVec4 mutedColor = ImVec4(0.62f, 0.66f, 0.70f, 1.0f);
 
-    ImGui::Text("Backend: %s", BackendName(m_backend));
-    ImGui::Text("Device VRAM: %s | ReBAR: %s", FormatBytes(caps.dedicatedVideoMemory).c_str(),
-                OnOff(caps.supportsResizableBar));
-    ImGui::Text("GPU-driven visible draws: %u / %u", m_lastGPUDrivenVisibleCount, m_sceneDrawCount);
-
-    ImGui::Separator();
-    ImGui::TextColored(goodColor, "CPU %.2f ms (avg %.2f ms, %.1f FPS)", stats.latestCpuFrameMs,
-                       stats.averageCpuFrameMs, stats.fps);
-    ImGui::Text("CPU min/max: %.2f / %.2f ms over %u samples", stats.minCpuFrameMs, stats.maxCpuFrameMs,
-                stats.sampleCount);
+    ImGui::Text("Backend: %s | GPU timestamps: %s", BackendName(m_backend), OnOff(caps.supportsTimestampQueries));
+    ImGui::Text("Timing (%.1fs avg): %.1f FPS | CPU %.2f ms", editor::FrameTelemetry::kDisplayRefreshSeconds,
+                stats.fps, stats.latestCpuFrameMs);
 
     if (stats.hasGpuFrameTime)
     {
-        ImGui::TextColored(goodColor, "GPU %.2f ms", stats.latestGpuFrameMs);
+        ImGui::Text("GPU %.2f ms", stats.latestGpuFrameMs);
     }
     else
     {
         ImGui::TextColored(warningColor, "GPU frame time: pending async timestamp readback");
     }
 
-    ImGui::TextColored(kTracyEnabled ? goodColor : mutedColor, "Tracy profiler: %s",
-                       kTracyEnabled ? "compiled in" : "not compiled in");
+    ImGui::Text("GPU-driven draws: %u visible / %u candidates", m_lastGPUDrivenVisibleCount, m_sceneDrawCount);
+    ImGui::Text("Tracy: %s", kTracyEnabled ? "compiled in" : "off");
 
-    const std::span<const float> cpuHistory = m_frameTelemetry->GetCpuFrameHistory();
-    const int historyCount = static_cast<int>(stats.sampleCount);
-    const int historyOffset =
-        stats.sampleCount == editor::FrameTelemetry::kFrameHistorySize
-            ? static_cast<int>(m_frameTelemetry->GetCpuFrameHistoryOffset())
-            : 0;
-    const float plotMax = std::max(33.0f, stats.maxCpuFrameMs * 1.15f);
-    if (historyCount > 0)
+    const std::span<const editor::GpuPassTelemetry> gpuPassTimings = m_frameTelemetry->GetGpuPassTimings();
+    if (!gpuPassTimings.empty() && ImGui::TreeNode("GPU pass timings"))
     {
-        ImGui::PlotLines("CPU frame ms", cpuHistory.data(), historyCount, historyOffset, nullptr, 0.0f, plotMax,
-                         ImVec2(0.0f, 56.0f));
+        for (uint32 index = 0; index < gpuPassTimings.size(); ++index)
+        {
+            const editor::GpuPassTelemetry& pass = gpuPassTimings[index];
+            ImGui::BulletText("%02u %-28s [%s] %.3f ms", index, pass.debugName.c_str(),
+                              QueueTypeName(pass.queueType), pass.gpuMs);
+        }
+        ImGui::TreePop();
     }
 
     ImGui::Separator();
@@ -2765,25 +2760,23 @@ void Win32Application::BuildTelemetryOverlay()
         return;
     }
 
-    ImGui::Text("Render Graph: %u passes, %u resources, %u queue batches", evidence.passCount,
+    ImGui::Text("RenderGraph: %u passes | %u resources | %u batches", evidence.passCount,
                 evidence.resourceCount, evidence.queueBatchCount);
-    ImGui::Text("Resources: %u imported, %u transient, %u aliased", evidence.importedResourceCount,
-                evidence.transientResourceCount, evidence.aliasedResourceCount);
-    ImGui::Text("Barriers: %u transition, %u aliasing, %u UAV, %u final", evidence.transitionBarrierCount,
-                evidence.aliasingBarrierCount, evidence.uavBarrierCount, evidence.finalBarrierCount);
+    ImGui::Text("Barriers: %u transitions | %u UAV | %u final", evidence.transitionBarrierCount,
+                evidence.uavBarrierCount, evidence.finalBarrierCount);
 
-    const float aliasSavingsRatio =
-        evidence.peakBytesWithoutAliasing > 0
-            ? static_cast<float>(static_cast<double>(evidence.bytesSavedWithAliasing) /
-                                 static_cast<double>(evidence.peakBytesWithoutAliasing))
-            : 0.0f;
-    ImGui::Text("Transient peak: %s -> %s", FormatBytes(evidence.peakBytesWithoutAliasing).c_str(),
-                FormatBytes(evidence.peakBytesWithAliasing).c_str());
-    ImGui::TextColored(aliasSavingsRatio > 0.0f ? goodColor : warningColor, "Aliasing saved: %s (%.1f%%)",
-                       FormatBytes(evidence.bytesSavedWithAliasing).c_str(), aliasSavingsRatio * 100.0f);
-    ImGui::ProgressBar(aliasSavingsRatio, ImVec2(-1.0f, 0.0f));
+    if (ImGui::TreeNode("RenderGraph internals"))
+    {
+        ImGui::Text("Resources: %u imported | %u transient | %u aliased", evidence.importedResourceCount,
+                    evidence.transientResourceCount, evidence.aliasedResourceCount);
+        ImGui::Text("Aliasing barriers: %u", evidence.aliasingBarrierCount);
+        ImGui::Text("Transient peak: %s -> %s", FormatBytes(evidence.peakBytesWithoutAliasing).c_str(),
+                    FormatBytes(evidence.peakBytesWithAliasing).c_str());
+        ImGui::Text("Aliasing saved: %s", FormatBytes(evidence.bytesSavedWithAliasing).c_str());
+        ImGui::TreePop();
+    }
 
-    if (ImGui::TreeNode("Render Graph passes"))
+    if (ImGui::TreeNode("RenderGraph passes"))
     {
         for (uint32 index = 0; index < evidence.passes.size(); ++index)
         {
@@ -3256,8 +3249,9 @@ void Win32Application::RenderFrame()
         }
     }
 
-    // Set the target fence value for any new resources deleted during this frame
-    m_rhiDevice->SetCurrentFrameFenceValue(m_fenceValues[frameIndex] + kMaxFramesInFlight); // roughly target next usage
+    // Until RenderGraph reserves this frame's actual submit fence, deletions before recording only need the
+    // already-completed slot fence.
+    m_rhiDevice->SetCurrentFrameFenceValue(m_fenceValues[frameIndex]);
 
     // 2. Acquire the next swapchain image
     rhi::IRHISemaphore* acquireSem = nullptr;
@@ -3312,6 +3306,11 @@ void Win32Application::RenderFrame()
         {
             m_frameTelemetry->CaptureRenderGraph(m_frameGraph->GetCompiledGraph());
         }
+    }
+
+    if (m_gpuTimerManager != nullptr && m_frameTelemetry != nullptr)
+    {
+        m_gpuTimerManager->ConsumeCompletedFrame(frameIndex, *m_frameTelemetry);
     }
 
     const HWND hwnd = static_cast<HWND>(m_window->GetNativeHandle());
@@ -3478,6 +3477,14 @@ void Win32Application::RenderFrame()
         render::StaticMeshDrawItem drawItem{};
         drawItem.vertexBuffer = meshResource.vertexBuffer;
         drawItem.indexBuffer = meshResource.indexBuffer;
+        if (meshResource.vertexBuffer == m_sceneVertexBuffer.get())
+        {
+            drawItem.vertexBufferHandle = m_frameSceneVertexBufferHandle;
+        }
+        if (meshResource.indexBuffer == m_sceneIndexBuffer.get())
+        {
+            drawItem.indexBufferHandle = m_frameSceneIndexBufferHandle;
+        }
         drawItem.vertexOffsetBytes = meshResource.vertexOffsetBytes;
         drawItem.indexOffsetBytes = meshResource.indexOffsetBytes;
         drawItem.indexCount = meshResource.indexCount;
@@ -3497,7 +3504,8 @@ void Win32Application::RenderFrame()
     if (m_gpuDrivenAvailable)
     {
         m_gBufferPass->SetIndirectBuffers(m_frameGPUDrivenIndirectArgsHandle, m_frameGPUDrivenIndirectCountHandle,
-                                          m_sceneVertexBuffer.get(), m_sceneIndexBuffer.get(), m_sceneDrawCount);
+                                          m_frameSceneVertexBufferHandle, m_frameSceneIndexBufferHandle,
+                                          m_sceneDrawCount);
     }
     else
     {
@@ -3515,6 +3523,12 @@ void Win32Application::RenderFrame()
     }
     m_bokehDOFPass->SetSettings(effectiveBokehSettings);
 
+    render::RenderGraphTimestampProfilingDesc timestampProfiling{};
+    if (m_gpuTimerManager != nullptr)
+    {
+        timestampProfiling = m_gpuTimerManager->BeginFrame(*m_rhiDevice, frameIndex, m_frameGraph->GetCompiledGraph());
+    }
+
     render::RenderGraph::ExecuteDesc executeDesc{
         .device = *m_rhiDevice,
         .timelineFence = *m_frameFence,
@@ -3522,9 +3536,14 @@ void Win32Application::RenderFrame()
         .commandListPool = m_commandListPool.get(),
         .waitSemaphore = acquireSem,
         .signalSemaphore = m_backend == rhi::RHIBackend::Vulkan ? m_presentSemaphores[imageIndex].get() : nullptr,
+        .timestampProfiling = timestampProfiling,
     };
 
     m_fenceValues[frameIndex] = m_frameGraph->Execute(executeDesc);
+    if (m_gpuTimerManager != nullptr)
+    {
+        m_gpuTimerManager->EndFrame(frameIndex, m_fenceValues[frameIndex], m_frameGraph->GetCompiledGraph());
+    }
     if (m_gpuDrivenAvailable && frameIndex < m_gpuDrivenReadbackPending.size())
     {
         m_gpuDrivenReadbackPending[frameIndex] = true;
@@ -3628,6 +3647,20 @@ void Win32Application::EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIRe
         m_frameSceneDrawBufferHandle =
             m_frameGraph->ImportBuffer(m_sceneDrawBuffer.get(), rhi::RHIResourceState::ShaderResource,
                                        rhi::RHIResourceState::ShaderResource, "SceneDrawBuffer");
+        m_frameSceneVertexBufferHandle = {};
+        m_frameSceneIndexBufferHandle = {};
+        if (m_sceneVertexBuffer != nullptr)
+        {
+            m_frameSceneVertexBufferHandle =
+                m_frameGraph->ImportBuffer(m_sceneVertexBuffer.get(), rhi::RHIResourceState::VertexBuffer,
+                                           rhi::RHIResourceState::VertexBuffer, "SceneVertexBuffer");
+        }
+        if (m_sceneIndexBuffer != nullptr)
+        {
+            m_frameSceneIndexBufferHandle =
+                m_frameGraph->ImportBuffer(m_sceneIndexBuffer.get(), rhi::RHIResourceState::IndexBuffer,
+                                           rhi::RHIResourceState::IndexBuffer, "SceneIndexBuffer");
+        }
         m_frameIBLPrefilteredHandle =
             m_frameGraph->ImportTexture(m_iblPrefilteredTexture.get(), rhi::RHIResourceState::ShaderResource,
                                         rhi::RHIResourceState::ShaderResource, "IBLPrefilteredEnvironment");
@@ -3714,6 +3747,7 @@ void Win32Application::EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIRe
         m_bokehDOFPass->Configure(m_frameSceneColorHandle, m_frameGBufferPositionHandle, m_frameBokehDOFHandle);
         m_toneMappingPass->Configure(m_frameBokehDOFHandle, m_frameBackBufferHandle);
         m_imguiPass->Configure(m_frameBackBufferHandle);
+        m_shadowMapPass->SetSharedGeometry(m_frameSceneVertexBufferHandle, m_frameSceneIndexBufferHandle);
         m_shadowMapPass->SetSceneData(std::span<const render::StaticMeshDrawItem>{}, m_frameConstantsBufferHandle,
                                       m_frameMaterialBufferHandle);
         m_ssaoPass->SetFrameData(m_frameConstantsBufferHandle);
@@ -3723,10 +3757,12 @@ void Win32Application::EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIRe
                                                m_frameIBLBrdfLutHandle);
         m_gBufferPass->SetSceneData(std::span<const render::StaticMeshDrawItem>{}, m_frameConstantsBufferHandle,
                                     m_frameMaterialBufferHandle, m_frameSceneDrawBufferHandle);
+        m_gBufferPass->SetSharedGeometry(m_frameSceneVertexBufferHandle, m_frameSceneIndexBufferHandle);
         if (m_gpuDrivenAvailable)
         {
             m_gBufferPass->SetIndirectBuffers(m_frameGPUDrivenIndirectArgsHandle, m_frameGPUDrivenIndirectCountHandle,
-                                              m_sceneVertexBuffer.get(), m_sceneIndexBuffer.get(), m_sceneDrawCount);
+                                              m_frameSceneVertexBufferHandle, m_frameSceneIndexBufferHandle,
+                                              m_sceneDrawCount);
         }
         else
         {
@@ -3779,6 +3815,18 @@ void Win32Application::EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIRe
     m_frameGraph->UpdateImportedBuffer(m_frameSceneDrawBufferHandle, m_sceneDrawBuffer.get(),
                                        rhi::RHIResourceState::ShaderResource, rhi::RHIResourceState::ShaderResource,
                                        "SceneDrawBuffer");
+    if (m_frameSceneVertexBufferHandle.IsValid())
+    {
+        m_frameGraph->UpdateImportedBuffer(m_frameSceneVertexBufferHandle, m_sceneVertexBuffer.get(),
+                                           rhi::RHIResourceState::VertexBuffer, rhi::RHIResourceState::VertexBuffer,
+                                           "SceneVertexBuffer");
+    }
+    if (m_frameSceneIndexBufferHandle.IsValid())
+    {
+        m_frameGraph->UpdateImportedBuffer(m_frameSceneIndexBufferHandle, m_sceneIndexBuffer.get(),
+                                           rhi::RHIResourceState::IndexBuffer, rhi::RHIResourceState::IndexBuffer,
+                                           "SceneIndexBuffer");
+    }
     m_frameGraph->UpdateImportedTexture(m_frameIBLPrefilteredHandle, m_iblPrefilteredTexture.get(),
                                         rhi::RHIResourceState::ShaderResource, rhi::RHIResourceState::ShaderResource,
                                         "IBLPrefilteredEnvironment");
@@ -3914,6 +3962,7 @@ void Win32Application::ShutdownRHI()
 
     m_imguiPass.reset();
     m_imguiRenderer.reset();
+    m_gpuTimerManager.reset();
     m_frameTelemetry.reset();
     m_toneMappingPass.reset();
     m_bokehDOFPass.reset();

@@ -223,6 +223,7 @@ add_library(west_editor STATIC
     editor/ImGuiPass.cpp
     editor/ImGuiRenderer.cpp
     editor/Profiler/FrameTelemetry.cpp
+    editor/Profiler/GPUTimerManager.cpp
 )
 
 file(GLOB_RECURSE WEST_EDITOR_HEADERS CONFIGURE_DEPENDS
@@ -284,6 +285,7 @@ if(WIN32 AND WEST_HAS_DX12)
         rhi/dx12/DX12Texture.cpp
         rhi/dx12/DX12Sampler.cpp
         rhi/dx12/DX12Pipeline.cpp
+        rhi/dx12/DX12TimestampQueryPool.cpp
     )
 
     file(GLOB_RECURSE WEST_RHI_DX12_HEADERS CONFIGURE_DEPENDS
@@ -334,6 +336,7 @@ if(WEST_HAS_VULKAN)
         rhi/vulkan/VulkanTexture.cpp
         rhi/vulkan/VulkanSampler.cpp
         rhi/vulkan/VulkanPipeline.cpp
+        rhi/vulkan/VulkanTimestampQueryPool.cpp
     )
 
     file(GLOB_RECURSE WEST_RHI_VULKAN_HEADERS CONFIGURE_DEPENDS

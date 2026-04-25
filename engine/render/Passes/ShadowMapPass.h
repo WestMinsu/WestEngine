@@ -31,6 +31,7 @@ public:
 
     void ConfigureTarget(TextureHandle shadowMap);
     void SetMaterialSampler(rhi::IRHISampler* sampler);
+    void SetSharedGeometry(BufferHandle sharedVertexBuffer, BufferHandle sharedIndexBuffer);
     void SetSceneData(std::span<const StaticMeshDrawItem> draws, BufferHandle frameBuffer,
                       BufferHandle materialBuffer);
 
@@ -56,6 +57,8 @@ private:
     TextureHandle m_shadowMap{};
     BufferHandle m_frameBuffer{};
     BufferHandle m_materialBuffer{};
+    BufferHandle m_sharedVertexBuffer{};
+    BufferHandle m_sharedIndexBuffer{};
     std::vector<StaticMeshDrawItem> m_draws;
 };
 

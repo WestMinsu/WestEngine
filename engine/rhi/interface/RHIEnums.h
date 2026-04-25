@@ -74,6 +74,19 @@ enum class RHIQueueType : uint8
     Copy,     // Transfer / DMA
 };
 
+inline constexpr uint32 kRHIQueueTypeCount = 3;
+
+[[nodiscard]] constexpr uint32 QueueTypeIndex(RHIQueueType queueType)
+{
+    return static_cast<uint32>(queueType);
+}
+
+enum class RHIBindlessBufferView : uint8
+{
+    ReadOnly,
+    ReadWrite,
+};
+
 // ── Buffer Usage Flags ────────────────────────────────────────────────────
 
 enum class RHIBufferUsage : uint32

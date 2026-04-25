@@ -15,6 +15,7 @@ namespace west::rhi
 class IRHIBuffer;
 class IRHITexture;
 class IRHIPipeline;
+class IRHITimestampQueryPool;
 
 class IRHICommandList
 {
@@ -73,7 +74,11 @@ public:
     virtual void CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, const RHICopyRegion& region) = 0;
 
     // ── Timestamp (Profiling) ─────────────────────────────────────────
-    virtual void WriteTimestamp(IRHIBuffer* queryBuffer, uint32_t index) = 0;
+    virtual void ResetTimestampQueries(IRHITimestampQueryPool* queryPool, uint32_t firstQuery,
+                                       uint32_t queryCount) = 0;
+    virtual void WriteTimestamp(IRHITimestampQueryPool* queryPool, uint32_t index) = 0;
+    virtual void ResolveTimestampQueries(IRHITimestampQueryPool* queryPool, uint32_t firstQuery,
+                                         uint32_t queryCount) = 0;
 
     // ── Queue Type Query ──────────────────────────────────────────────
     virtual RHIQueueType GetQueueType() const = 0;

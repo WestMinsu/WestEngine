@@ -49,7 +49,11 @@ public:
 
     void CopyBuffer(IRHIBuffer* src, uint64_t srcOffset, IRHIBuffer* dst, uint64_t dstOffset, uint64_t size) override;
     void CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, const RHICopyRegion& region) override;
-    void WriteTimestamp(IRHIBuffer* queryBuffer, uint32_t index) override;
+    void ResetTimestampQueries(IRHITimestampQueryPool* queryPool, uint32_t firstQuery,
+                               uint32_t queryCount) override;
+    void WriteTimestamp(IRHITimestampQueryPool* queryPool, uint32_t index) override;
+    void ResolveTimestampQueries(IRHITimestampQueryPool* queryPool, uint32_t firstQuery,
+                                 uint32_t queryCount) override;
 
     RHIQueueType GetQueueType() const override
     {

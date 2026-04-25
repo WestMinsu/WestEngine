@@ -351,6 +351,11 @@ void ComputeBounds(SceneAsset& asset)
             ResolveTextureIndex(sceneSourceFile, pbr.base_color_texture, textureIndices, asset);
     }
 
+    if (material.alpha_mode == cgltf_alpha_mode_mask)
+    {
+        converted.alphaCutoff = Clamp01(material.alpha_cutoff);
+    }
+
     return converted;
 }
 

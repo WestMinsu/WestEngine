@@ -65,18 +65,44 @@ void FrameTelemetry::RecordFrameDelta(float deltaSeconds)
     m_historyCursor = (m_historyCursor + 1) % kFrameHistorySize;
     m_recordedSamples = std::min<uint32>(m_recordedSamples + 1, kFrameHistorySize);
     RecomputeCpuStats();
+
+    m_displayWindowSeconds += deltaSeconds;
+    m_displayCpuFrameMsSum += m_stats.latestCpuFrameMs;
+    ++m_displayFrameCount;
+
+    if (!m_hasDisplayStats || m_displayWindowSeconds >= kDisplayRefreshSeconds)
+    {
+        RefreshDisplayStats();
+    }
 }
 
 void FrameTelemetry::RecordGpuFrameTime(float gpuFrameMs)
 {
     m_stats.latestGpuFrameMs = gpuFrameMs;
     m_stats.hasGpuFrameTime = gpuFrameMs >= 0.0f;
+
+    if (m_stats.hasGpuFrameTime)
+    {
+        m_displayGpuFrameMsSum += gpuFrameMs;
+        ++m_displayGpuSampleCount;
+    }
+}
+
+void FrameTelemetry::RecordGpuFrameTiming(float gpuFrameMs, std::span<const GpuPassTelemetry> passTimings)
+{
+    RecordGpuFrameTime(gpuFrameMs);
+    m_gpuPassTimings.assign(passTimings.begin(), passTimings.end());
 }
 
 void FrameTelemetry::ClearGpuFrameTime()
 {
     m_stats.latestGpuFrameMs = 0.0f;
     m_stats.hasGpuFrameTime = false;
+    m_displayStats.latestGpuFrameMs = 0.0f;
+    m_displayStats.hasGpuFrameTime = false;
+    m_displayGpuFrameMsSum = 0.0f;
+    m_displayGpuSampleCount = 0;
+    m_gpuPassTimings.clear();
 }
 
 void FrameTelemetry::CaptureRenderGraph(const render::CompiledRenderGraph& graph)
@@ -179,6 +205,43 @@ void FrameTelemetry::RecomputeCpuStats()
     m_stats.maxCpuFrameMs = maxMs;
     m_stats.fps = m_stats.latestCpuFrameMs > 0.0f ? 1000.0f / m_stats.latestCpuFrameMs : 0.0f;
     m_stats.sampleCount = m_recordedSamples;
+}
+
+void FrameTelemetry::RefreshDisplayStats()
+{
+    if (m_displayFrameCount == 0 || m_displayWindowSeconds <= 0.0f)
+    {
+        return;
+    }
+
+    const float windowCpuMs = m_displayCpuFrameMsSum / static_cast<float>(m_displayFrameCount);
+    const float windowFps = static_cast<float>(m_displayFrameCount) / m_displayWindowSeconds;
+    const bool hadDisplayGpuFrameTime = m_displayStats.hasGpuFrameTime;
+    const float previousDisplayGpuFrameMs = m_displayStats.latestGpuFrameMs;
+
+    m_displayStats = m_stats;
+    m_displayStats.latestCpuFrameMs = windowCpuMs;
+    m_displayStats.fps = windowFps;
+    m_displayStats.sampleCount = m_displayFrameCount;
+
+    if (m_displayGpuSampleCount > 0)
+    {
+        m_displayStats.latestGpuFrameMs =
+            m_displayGpuFrameMsSum / static_cast<float>(m_displayGpuSampleCount);
+        m_displayStats.hasGpuFrameTime = true;
+    }
+    else if (hadDisplayGpuFrameTime)
+    {
+        m_displayStats.latestGpuFrameMs = previousDisplayGpuFrameMs;
+        m_displayStats.hasGpuFrameTime = true;
+    }
+
+    m_displayWindowSeconds = 0.0f;
+    m_displayCpuFrameMsSum = 0.0f;
+    m_displayGpuFrameMsSum = 0.0f;
+    m_displayFrameCount = 0;
+    m_displayGpuSampleCount = 0;
+    m_hasDisplayStats = true;
 }
 
 } // namespace west::editor

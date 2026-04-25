@@ -4,6 +4,8 @@
 // =============================================================================
 #pragma once
 
+#include "render/RenderGraph/RenderGraphResource.h"
+
 #include <array>
 #include <cstdint>
 
@@ -19,6 +21,8 @@ struct StaticMeshDrawItem
 {
     rhi::IRHIBuffer* vertexBuffer = nullptr;
     rhi::IRHIBuffer* indexBuffer = nullptr;
+    BufferHandle vertexBufferHandle{};
+    BufferHandle indexBufferHandle{};
     uint64_t vertexOffsetBytes = 0;
     uint64_t indexOffsetBytes = 0;
     uint32_t indexCount = 0;

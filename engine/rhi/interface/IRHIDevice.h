@@ -6,6 +6,7 @@
 
 #include "rhi/interface/RHIDescriptors.h"
 #include "rhi/interface/RHIEnums.h"
+#include "rhi/interface/IRHITimestampQueryPool.h"
 
 #include <functional>
 #include <memory>
@@ -42,6 +43,8 @@ public:
     // ── Synchronization ───────────────────────────────────────────────
     virtual std::unique_ptr<IRHIFence> CreateFence(uint64_t initialValue = 0) = 0;
     virtual std::unique_ptr<IRHISemaphore> CreateBinarySemaphore() = 0;
+    virtual std::unique_ptr<IRHITimestampQueryPool> CreateTimestampQueryPool(
+        const RHITimestampQueryPoolDesc& desc) = 0;
 
     // ── Command ───────────────────────────────────────────────────────
     virtual std::unique_ptr<IRHICommandList> CreateCommandList(RHIQueueType type) = 0;
@@ -53,7 +56,9 @@ public:
     virtual std::unique_ptr<IRHISwapChain> CreateSwapChain(const RHISwapChainDesc& desc) = 0;
 
     // ── Bindless ──────────────────────────────────────────────────────
-    virtual BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer, bool writable = false) = 0;
+    virtual BindlessIndex RegisterBindlessResource(
+        IRHIBuffer* buffer,
+        RHIBindlessBufferView view = RHIBindlessBufferView::ReadOnly) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHITexture* texture) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHISampler* sampler) = 0;
     virtual void UnregisterBindlessResource(BindlessIndex index) = 0;

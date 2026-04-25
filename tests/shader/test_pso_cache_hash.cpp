@@ -101,6 +101,12 @@ public:
         return nullptr;
     }
 
+    std::unique_ptr<rhi::IRHITimestampQueryPool> CreateTimestampQueryPool(
+        const rhi::RHITimestampQueryPoolDesc&) override
+    {
+        return nullptr;
+    }
+
     std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType) override
     {
         return nullptr;
@@ -116,7 +122,9 @@ public:
         return nullptr;
     }
 
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override
+    rhi::BindlessIndex RegisterBindlessResource(
+        rhi::IRHIBuffer*,
+        rhi::RHIBindlessBufferView = rhi::RHIBindlessBufferView::ReadOnly) override
     {
         return rhi::kInvalidBindlessIndex;
     }

@@ -57,6 +57,7 @@ class TransientResourcePool;
 namespace west::editor
 {
 class FrameTelemetry;
+class GPUTimerManager;
 class ImGuiPass;
 class ImGuiRenderer;
 } // namespace west::editor
@@ -178,6 +179,7 @@ private:
     std::unique_ptr<render::BokehDOFPass> m_bokehDOFPass;
     std::unique_ptr<render::ToneMappingPass> m_toneMappingPass;
     std::unique_ptr<editor::FrameTelemetry> m_frameTelemetry;
+    std::unique_ptr<editor::GPUTimerManager> m_gpuTimerManager;
     std::unique_ptr<editor::ImGuiRenderer> m_imguiRenderer;
     std::unique_ptr<editor::ImGuiPass> m_imguiPass;
     std::unique_ptr<scene::Camera> m_sceneCamera;
@@ -257,6 +259,8 @@ private:
     render::BufferHandle m_frameConstantsBufferHandle{};
     render::BufferHandle m_frameMaterialBufferHandle{};
     render::BufferHandle m_frameSceneDrawBufferHandle{};
+    render::BufferHandle m_frameSceneVertexBufferHandle{};
+    render::BufferHandle m_frameSceneIndexBufferHandle{};
     render::BufferHandle m_frameGPUDrivenCountResetBufferHandle{};
     render::BufferHandle m_frameGPUDrivenIndirectArgsHandle{};
     render::BufferHandle m_frameGPUDrivenIndirectCountHandle{};

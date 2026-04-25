@@ -6,6 +6,7 @@
 
 #include "rhi/interface/RHIEnums.h"
 
+#include <array>
 #include <cstdint>
 #include <span>
 
@@ -43,8 +44,25 @@ struct RHIDeviceCaps
     bool supportsRayTracing = false;
     bool supportsResizableBar = false;
     bool supportsMeshShaders = false;
+    bool supportsTimestampQueries = false;
+    std::array<bool, kRHIQueueTypeCount> supportsTimestampQueriesByQueue{};
     uint32_t maxBindlessResources = 0;
     uint64_t dedicatedVideoMemory = 0; // bytes
+
+    [[nodiscard]] bool SupportsTimestampQueries(RHIQueueType queueType) const
+    {
+        const uint32_t index = QueueTypeIndex(queueType);
+        return index < supportsTimestampQueriesByQueue.size() && supportsTimestampQueriesByQueue[index];
+    }
+};
+
+// ── Timestamp Query Pool Descriptor ───────────────────────────────────────
+
+struct RHITimestampQueryPoolDesc
+{
+    uint32_t queryCount = 0;
+    RHIQueueType queueType = RHIQueueType::Graphics;
+    const char* debugName = nullptr;
 };
 
 // ── Buffer Descriptor ─────────────────────────────────────────────────────

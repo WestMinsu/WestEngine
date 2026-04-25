@@ -50,6 +50,14 @@ struct RenderGraphResourceTelemetry
     uint64 estimatedSizeBytes = 0;
 };
 
+struct GpuPassTelemetry
+{
+    std::string debugName;
+    rhi::RHIQueueType queueType = rhi::RHIQueueType::Graphics;
+    float gpuMs = 0.0f;
+    bool valid = false;
+};
+
 struct RenderGraphEvidence
 {
     bool valid = false;
@@ -74,9 +82,11 @@ class FrameTelemetry final
 {
 public:
     static constexpr uint32 kFrameHistorySize = 120;
+    static constexpr float kDisplayRefreshSeconds = 0.5f;
 
     void RecordFrameDelta(float deltaSeconds);
     void RecordGpuFrameTime(float gpuFrameMs);
+    void RecordGpuFrameTiming(float gpuFrameMs, std::span<const GpuPassTelemetry> passTimings);
     void ClearGpuFrameTime();
     void CaptureRenderGraph(const render::CompiledRenderGraph& graph);
 
@@ -85,9 +95,19 @@ public:
         return m_stats;
     }
 
+    [[nodiscard]] const FrameTelemetryStats& GetDisplayStats() const
+    {
+        return m_displayStats;
+    }
+
     [[nodiscard]] const RenderGraphEvidence& GetRenderGraphEvidence() const
     {
         return m_renderGraphEvidence;
+    }
+
+    [[nodiscard]] std::span<const GpuPassTelemetry> GetGpuPassTimings() const
+    {
+        return std::span<const GpuPassTelemetry>(m_gpuPassTimings.data(), m_gpuPassTimings.size());
     }
 
     [[nodiscard]] std::span<const float> GetCpuFrameHistory() const
@@ -102,12 +122,21 @@ public:
 
 private:
     void RecomputeCpuStats();
+    void RefreshDisplayStats();
 
     std::array<float, kFrameHistorySize> m_cpuFrameMs{};
     uint32 m_historyCursor = 0;
     uint32 m_recordedSamples = 0;
     FrameTelemetryStats m_stats{};
+    FrameTelemetryStats m_displayStats{};
     RenderGraphEvidence m_renderGraphEvidence{};
+    std::vector<GpuPassTelemetry> m_gpuPassTimings;
+    float m_displayWindowSeconds = 0.0f;
+    float m_displayCpuFrameMsSum = 0.0f;
+    float m_displayGpuFrameMsSum = 0.0f;
+    uint32 m_displayFrameCount = 0;
+    uint32 m_displayGpuSampleCount = 0;
+    bool m_hasDisplayStats = false;
 };
 
 } // namespace west::editor

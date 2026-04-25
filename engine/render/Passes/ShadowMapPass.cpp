@@ -64,6 +64,12 @@ void ShadowMapPass::SetMaterialSampler(rhi::IRHISampler* sampler)
     m_sampler = sampler;
 }
 
+void ShadowMapPass::SetSharedGeometry(BufferHandle sharedVertexBuffer, BufferHandle sharedIndexBuffer)
+{
+    m_sharedVertexBuffer = sharedVertexBuffer;
+    m_sharedIndexBuffer = sharedIndexBuffer;
+}
+
 void ShadowMapPass::SetSceneData(std::span<const StaticMeshDrawItem> draws, BufferHandle frameBuffer,
                                  BufferHandle materialBuffer)
 {
@@ -80,6 +86,25 @@ void ShadowMapPass::Setup(RenderGraphBuilder& builder)
 
     builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
     builder.ReadBuffer(m_materialBuffer, rhi::RHIResourceState::ShaderResource);
+    if (m_sharedVertexBuffer.IsValid())
+    {
+        builder.ReadBuffer(m_sharedVertexBuffer, rhi::RHIResourceState::VertexBuffer);
+    }
+    if (m_sharedIndexBuffer.IsValid())
+    {
+        builder.ReadBuffer(m_sharedIndexBuffer, rhi::RHIResourceState::IndexBuffer);
+    }
+    for (const StaticMeshDrawItem& draw : m_draws)
+    {
+        if (draw.vertexBufferHandle.IsValid())
+        {
+            builder.ReadBuffer(draw.vertexBufferHandle, rhi::RHIResourceState::VertexBuffer);
+        }
+        if (draw.indexBufferHandle.IsValid())
+        {
+            builder.ReadBuffer(draw.indexBufferHandle, rhi::RHIResourceState::IndexBuffer);
+        }
+    }
     builder.WriteTexture(m_shadowMap, rhi::RHIResourceState::DepthStencilWrite);
 }
 
@@ -124,8 +149,8 @@ void ShadowMapPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& c
 
     for (const StaticMeshDrawItem& draw : m_draws)
     {
-        WEST_ASSERT(draw.vertexBuffer != nullptr);
-        WEST_ASSERT(draw.indexBuffer != nullptr);
+        WEST_ASSERT(draw.vertexBuffer != nullptr || draw.vertexBufferHandle.IsValid());
+        WEST_ASSERT(draw.indexBuffer != nullptr || draw.indexBufferHandle.IsValid());
         WEST_ASSERT(draw.indexCount > 0);
 
         ShadowMapPushConstants pushConstants{};
@@ -138,9 +163,16 @@ void ShadowMapPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& c
             pushConstants.modelMatrix[i] = draw.modelMatrix[i];
         }
 
+        rhi::IRHIBuffer* vertexBuffer =
+            draw.vertexBufferHandle.IsValid() ? context.GetBuffer(draw.vertexBufferHandle) : draw.vertexBuffer;
+        rhi::IRHIBuffer* indexBuffer =
+            draw.indexBufferHandle.IsValid() ? context.GetBuffer(draw.indexBufferHandle) : draw.indexBuffer;
+        WEST_ASSERT(vertexBuffer != nullptr);
+        WEST_ASSERT(indexBuffer != nullptr);
+
         commandList.SetPushConstants(&pushConstants, sizeof(pushConstants));
-        commandList.SetVertexBuffer(0, draw.vertexBuffer, draw.vertexOffsetBytes);
-        commandList.SetIndexBuffer(draw.indexBuffer, rhi::RHIFormat::R32_UINT, draw.indexOffsetBytes);
+        commandList.SetVertexBuffer(0, vertexBuffer, draw.vertexOffsetBytes);
+        commandList.SetIndexBuffer(indexBuffer, rhi::RHIFormat::R32_UINT, draw.indexOffsetBytes);
         commandList.DrawIndexed(draw.indexCount);
     }
 

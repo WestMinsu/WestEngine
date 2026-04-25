@@ -66,6 +66,12 @@ void GBufferPass::SetMaterialSampler(rhi::IRHISampler* sampler)
     m_sampler = sampler;
 }
 
+void GBufferPass::SetSharedGeometry(BufferHandle sharedVertexBuffer, BufferHandle sharedIndexBuffer)
+{
+    m_sharedVertexBuffer = sharedVertexBuffer;
+    m_sharedIndexBuffer = sharedIndexBuffer;
+}
+
 void GBufferPass::SetSceneData(std::span<const StaticMeshDrawItem> draws, BufferHandle frameBuffer,
                                BufferHandle materialBuffer, BufferHandle drawBuffer)
 {
@@ -76,13 +82,12 @@ void GBufferPass::SetSceneData(std::span<const StaticMeshDrawItem> draws, Buffer
 }
 
 void GBufferPass::SetIndirectBuffers(BufferHandle indirectArgs, BufferHandle indirectCount,
-                                     rhi::IRHIBuffer* sharedVertexBuffer, rhi::IRHIBuffer* sharedIndexBuffer,
-                                     uint32_t maxDrawCount)
+                                     BufferHandle sharedVertexBuffer, BufferHandle sharedIndexBuffer, uint32_t maxDrawCount)
 {
     WEST_ASSERT(indirectArgs.IsValid());
     WEST_ASSERT(indirectCount.IsValid());
-    WEST_ASSERT(sharedVertexBuffer != nullptr);
-    WEST_ASSERT(sharedIndexBuffer != nullptr);
+    WEST_ASSERT(sharedVertexBuffer.IsValid());
+    WEST_ASSERT(sharedIndexBuffer.IsValid());
     WEST_ASSERT(maxDrawCount > 0);
 
     m_indirectArgs = indirectArgs;
@@ -97,8 +102,6 @@ void GBufferPass::DisableIndirect()
 {
     m_indirectArgs = {};
     m_indirectCount = {};
-    m_sharedVertexBuffer = nullptr;
-    m_sharedIndexBuffer = nullptr;
     m_maxDrawCount = 0;
     m_useIndirect = false;
 }
@@ -116,6 +119,14 @@ void GBufferPass::Setup(RenderGraphBuilder& builder)
     builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
     builder.ReadBuffer(m_materialBuffer, rhi::RHIResourceState::ShaderResource);
     builder.ReadBuffer(m_drawBuffer, rhi::RHIResourceState::ShaderResource);
+    if (m_sharedVertexBuffer.IsValid())
+    {
+        builder.ReadBuffer(m_sharedVertexBuffer, rhi::RHIResourceState::VertexBuffer);
+    }
+    if (m_sharedIndexBuffer.IsValid())
+    {
+        builder.ReadBuffer(m_sharedIndexBuffer, rhi::RHIResourceState::IndexBuffer);
+    }
     builder.WriteTexture(m_worldPosition, rhi::RHIResourceState::RenderTarget);
     builder.WriteTexture(m_normalRoughness, rhi::RHIResourceState::RenderTarget);
     builder.WriteTexture(m_albedoMetallic, rhi::RHIResourceState::RenderTarget);
@@ -125,8 +136,24 @@ void GBufferPass::Setup(RenderGraphBuilder& builder)
     {
         WEST_ASSERT(m_indirectArgs.IsValid());
         WEST_ASSERT(m_indirectCount.IsValid());
+        WEST_ASSERT(m_sharedVertexBuffer.IsValid());
+        WEST_ASSERT(m_sharedIndexBuffer.IsValid());
         builder.ReadBuffer(m_indirectArgs, rhi::RHIResourceState::IndirectArgument);
         builder.ReadBuffer(m_indirectCount, rhi::RHIResourceState::IndirectArgument);
+    }
+    else
+    {
+        for (const StaticMeshDrawItem& draw : m_draws)
+        {
+            if (draw.vertexBufferHandle.IsValid())
+            {
+                builder.ReadBuffer(draw.vertexBufferHandle, rhi::RHIResourceState::VertexBuffer);
+            }
+            if (draw.indexBufferHandle.IsValid())
+            {
+                builder.ReadBuffer(draw.indexBufferHandle, rhi::RHIResourceState::IndexBuffer);
+            }
+        }
     }
 }
 
@@ -214,19 +241,23 @@ void GBufferPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& com
         pushConstants.useDrawRecordIndexOverride = 0;
         commandList.SetPushConstants(&pushConstants, sizeof(pushConstants));
 
-        WEST_ASSERT(m_sharedVertexBuffer != nullptr);
-        WEST_ASSERT(m_sharedIndexBuffer != nullptr);
+        WEST_ASSERT(m_sharedVertexBuffer.IsValid());
+        WEST_ASSERT(m_sharedIndexBuffer.IsValid());
         WEST_ASSERT(m_indirectArgs.IsValid());
         WEST_ASSERT(m_indirectCount.IsValid());
         WEST_ASSERT(m_maxDrawCount > 0);
 
+        rhi::IRHIBuffer* sharedVertexBuffer = context.GetBuffer(m_sharedVertexBuffer);
+        rhi::IRHIBuffer* sharedIndexBuffer = context.GetBuffer(m_sharedIndexBuffer);
         rhi::IRHIBuffer* indirectArgs = context.GetBuffer(m_indirectArgs);
         rhi::IRHIBuffer* indirectCount = context.GetBuffer(m_indirectCount);
+        WEST_ASSERT(sharedVertexBuffer != nullptr);
+        WEST_ASSERT(sharedIndexBuffer != nullptr);
         WEST_ASSERT(indirectArgs != nullptr);
         WEST_ASSERT(indirectCount != nullptr);
 
-        commandList.SetVertexBuffer(0, m_sharedVertexBuffer, 0);
-        commandList.SetIndexBuffer(m_sharedIndexBuffer, rhi::RHIFormat::R32_UINT, 0);
+        commandList.SetVertexBuffer(0, sharedVertexBuffer, 0);
+        commandList.SetIndexBuffer(sharedIndexBuffer, rhi::RHIFormat::R32_UINT, 0);
         commandList.DrawIndexedIndirectCount(indirectArgs, 0, indirectCount, 0, m_maxDrawCount,
                                              sizeof(DrawIndexedIndirectArgs));
     }
@@ -235,16 +266,23 @@ void GBufferPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& com
         for (uint32_t drawIndex = 0; drawIndex < m_draws.size(); ++drawIndex)
         {
             const StaticMeshDrawItem& draw = m_draws[drawIndex];
-            WEST_ASSERT(draw.vertexBuffer != nullptr);
-            WEST_ASSERT(draw.indexBuffer != nullptr);
+            WEST_ASSERT(draw.vertexBuffer != nullptr || draw.vertexBufferHandle.IsValid());
+            WEST_ASSERT(draw.indexBuffer != nullptr || draw.indexBufferHandle.IsValid());
             WEST_ASSERT(draw.indexCount > 0);
 
             pushConstants.drawRecordIndexOverride = drawIndex;
             pushConstants.useDrawRecordIndexOverride = 1;
             commandList.SetPushConstants(&pushConstants, sizeof(pushConstants));
 
-            commandList.SetVertexBuffer(0, draw.vertexBuffer, draw.vertexOffsetBytes);
-            commandList.SetIndexBuffer(draw.indexBuffer, rhi::RHIFormat::R32_UINT, draw.indexOffsetBytes);
+            rhi::IRHIBuffer* vertexBuffer =
+                draw.vertexBufferHandle.IsValid() ? context.GetBuffer(draw.vertexBufferHandle) : draw.vertexBuffer;
+            rhi::IRHIBuffer* indexBuffer =
+                draw.indexBufferHandle.IsValid() ? context.GetBuffer(draw.indexBufferHandle) : draw.indexBuffer;
+            WEST_ASSERT(vertexBuffer != nullptr);
+            WEST_ASSERT(indexBuffer != nullptr);
+
+            commandList.SetVertexBuffer(0, vertexBuffer, draw.vertexOffsetBytes);
+            commandList.SetIndexBuffer(indexBuffer, rhi::RHIFormat::R32_UINT, draw.indexOffsetBytes);
             commandList.DrawIndexed(draw.indexCount, 1, 0, 0, drawIndex);
         }
     }

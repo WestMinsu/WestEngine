@@ -6,6 +6,7 @@
 
 #include "rhi/dx12/DX12Buffer.h"
 #include "rhi/dx12/DX12Pipeline.h"
+#include "rhi/dx12/DX12TimestampQueryPool.h"
 #include "rhi/dx12/DX12Texture.h"
 #include "rhi/common/FormatConversion.h"
 
@@ -436,9 +437,36 @@ void DX12CommandList::CopyBufferToTexture(IRHIBuffer* src, IRHITexture* dst, con
                                  &srcLocation, &srcBox);
 }
 
-void DX12CommandList::WriteTimestamp(IRHIBuffer* /*queryBuffer*/, uint32_t /*index*/)
+void DX12CommandList::ResetTimestampQueries(IRHITimestampQueryPool* /*queryPool*/, uint32_t /*firstQuery*/,
+                                            uint32_t /*queryCount*/)
 {
-    // TODO(minsu): Phase 7 — EndQuery for timestamp
+    // D3D12 timestamp query slots are overwritten by EndQuery; no explicit reset command exists.
+}
+
+void DX12CommandList::WriteTimestamp(IRHITimestampQueryPool* queryPool, uint32_t index)
+{
+    auto* dx12QueryPool = static_cast<DX12TimestampQueryPool*>(queryPool);
+    WEST_ASSERT(dx12QueryPool != nullptr);
+    WEST_ASSERT(index < dx12QueryPool->GetDesc().queryCount);
+
+    m_cmdList->EndQuery(dx12QueryPool->GetD3DQueryHeap(), D3D12_QUERY_TYPE_TIMESTAMP, index);
+}
+
+void DX12CommandList::ResolveTimestampQueries(IRHITimestampQueryPool* queryPool, uint32_t firstQuery,
+                                              uint32_t queryCount)
+{
+    if (queryCount == 0)
+    {
+        return;
+    }
+
+    auto* dx12QueryPool = static_cast<DX12TimestampQueryPool*>(queryPool);
+    WEST_ASSERT(dx12QueryPool != nullptr);
+    WEST_ASSERT(firstQuery + queryCount <= dx12QueryPool->GetDesc().queryCount);
+
+    m_cmdList->ResolveQueryData(dx12QueryPool->GetD3DQueryHeap(), D3D12_QUERY_TYPE_TIMESTAMP,
+                                firstQuery, queryCount, dx12QueryPool->GetReadbackResource(),
+                                static_cast<UINT64>(firstQuery) * sizeof(uint64_t));
 }
 
 } // namespace west::rhi

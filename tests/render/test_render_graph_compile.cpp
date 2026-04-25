@@ -17,6 +17,7 @@
 #include "TestAssert.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <iostream>
 #include <vector>
@@ -46,6 +47,39 @@ public:
 
 private:
     rhi::RHITextureDesc m_desc{};
+};
+
+class FakeTimestampQueryPool final : public rhi::IRHITimestampQueryPool
+{
+public:
+    explicit FakeTimestampQueryPool(uint32_t queryCount, rhi::RHIQueueType queueType)
+    {
+        m_desc.queryCount = queryCount;
+        m_desc.queueType = queueType;
+        m_desc.debugName = "FakeTimestampQueryPool";
+    }
+
+    const rhi::RHITimestampQueryPoolDesc& GetDesc() const override
+    {
+        return m_desc;
+    }
+
+    float GetTimestampPeriodNanoseconds() const override
+    {
+        return 1.0f;
+    }
+
+    bool ReadTimestamps(uint32_t, uint32_t queryCount, std::span<uint64_t> timestamps) override
+    {
+        for (uint32_t index = 0; index < queryCount && index < timestamps.size(); ++index)
+        {
+            timestamps[index] = index;
+        }
+        return true;
+    }
+
+private:
+    rhi::RHITimestampQueryPoolDesc m_desc{};
 };
 
 class TestPass final : public render::RenderGraphPass
@@ -142,6 +176,12 @@ public:
         return nullptr;
     }
 
+    std::unique_ptr<rhi::IRHITimestampQueryPool> CreateTimestampQueryPool(
+        const rhi::RHITimestampQueryPoolDesc&) override
+    {
+        return nullptr;
+    }
+
     std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType) override
     {
         return nullptr;
@@ -157,7 +197,9 @@ public:
         return nullptr;
     }
 
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override
+    rhi::BindlessIndex RegisterBindlessResource(
+        rhi::IRHIBuffer*,
+        rhi::RHIBindlessBufferView = rhi::RHIBindlessBufferView::ReadOnly) override
     {
         return rhi::kInvalidBindlessIndex;
     }
@@ -249,7 +291,9 @@ public:
     void ResourceBarriers(std::span<const rhi::RHIBarrierDesc>) override {}
     void CopyBuffer(rhi::IRHIBuffer*, uint64_t, rhi::IRHIBuffer*, uint64_t, uint64_t) override {}
     void CopyBufferToTexture(rhi::IRHIBuffer*, rhi::IRHITexture*, const rhi::RHICopyRegion&) override {}
-    void WriteTimestamp(rhi::IRHIBuffer*, uint32_t) override {}
+    void ResetTimestampQueries(rhi::IRHITimestampQueryPool*, uint32_t, uint32_t) override {}
+    void WriteTimestamp(rhi::IRHITimestampQueryPool*, uint32_t) override {}
+    void ResolveTimestampQueries(rhi::IRHITimestampQueryPool*, uint32_t, uint32_t) override {}
 
     rhi::RHIQueueType GetQueueType() const override
     {
@@ -272,6 +316,8 @@ public:
     std::unique_ptr<rhi::IRHIPipeline> CreateComputePipeline(const rhi::RHIComputePipelineDesc&) override { return nullptr; }
     std::unique_ptr<rhi::IRHIFence> CreateFence(uint64_t = 0) override { return nullptr; }
     std::unique_ptr<rhi::IRHISemaphore> CreateBinarySemaphore() override { return nullptr; }
+    std::unique_ptr<rhi::IRHITimestampQueryPool> CreateTimestampQueryPool(
+        const rhi::RHITimestampQueryPoolDesc&) override { return nullptr; }
 
     std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType type) override
     {
@@ -281,7 +327,9 @@ public:
 
     rhi::IRHIQueue* GetQueue(rhi::RHIQueueType) override { return nullptr; }
     std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override { return nullptr; }
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(
+        rhi::IRHIBuffer*,
+        rhi::RHIBindlessBufferView = rhi::RHIBindlessBufferView::ReadOnly) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
     void UnregisterBindlessResource(rhi::BindlessIndex) override {}
@@ -356,7 +404,25 @@ public:
 
     void CopyBuffer(rhi::IRHIBuffer*, uint64_t, rhi::IRHIBuffer*, uint64_t, uint64_t) override {}
     void CopyBufferToTexture(rhi::IRHIBuffer*, rhi::IRHITexture*, const rhi::RHICopyRegion&) override {}
-    void WriteTimestamp(rhi::IRHIBuffer*, uint32_t) override {}
+    void ResetTimestampQueries(rhi::IRHITimestampQueryPool*, uint32_t firstQuery, uint32_t queryCount) override
+    {
+        ++timestampResetCalls;
+        lastResetFirstQuery = firstQuery;
+        lastResetQueryCount = queryCount;
+    }
+
+    void WriteTimestamp(rhi::IRHITimestampQueryPool*, uint32_t index) override
+    {
+        ++timestampWriteCalls;
+        writtenTimestampIndices.push_back(index);
+    }
+
+    void ResolveTimestampQueries(rhi::IRHITimestampQueryPool*, uint32_t firstQuery, uint32_t queryCount) override
+    {
+        ++timestampResolveCalls;
+        lastResolveFirstQuery = firstQuery;
+        lastResolveQueryCount = queryCount;
+    }
 
     rhi::RHIQueueType GetQueueType() const override
     {
@@ -365,6 +431,14 @@ public:
 
     uint32_t singleBarrierCalls = 0;
     std::vector<uint32_t> barrierBatchSizes;
+    uint32_t timestampResetCalls = 0;
+    uint32_t timestampWriteCalls = 0;
+    uint32_t timestampResolveCalls = 0;
+    uint32_t lastResetFirstQuery = 0;
+    uint32_t lastResetQueryCount = 0;
+    uint32_t lastResolveFirstQuery = 0;
+    uint32_t lastResolveQueryCount = 0;
+    std::vector<uint32_t> writtenTimestampIndices;
 
 private:
     rhi::RHIQueueType m_queueType = rhi::RHIQueueType::Graphics;
@@ -408,6 +482,8 @@ public:
     std::unique_ptr<rhi::IRHIPipeline> CreateComputePipeline(const rhi::RHIComputePipelineDesc&) override { return nullptr; }
     std::unique_ptr<rhi::IRHIFence> CreateFence(uint64_t = 0) override { return nullptr; }
     std::unique_ptr<rhi::IRHISemaphore> CreateBinarySemaphore() override { return nullptr; }
+    std::unique_ptr<rhi::IRHITimestampQueryPool> CreateTimestampQueryPool(
+        const rhi::RHITimestampQueryPoolDesc&) override { return nullptr; }
 
     std::unique_ptr<rhi::IRHICommandList> CreateCommandList(rhi::RHIQueueType type) override
     {
@@ -432,7 +508,9 @@ public:
     }
 
     std::unique_ptr<rhi::IRHISwapChain> CreateSwapChain(const rhi::RHISwapChainDesc&) override { return nullptr; }
-    rhi::BindlessIndex RegisterBindlessResource(rhi::IRHIBuffer*, bool = false) override { return rhi::kInvalidBindlessIndex; }
+    rhi::BindlessIndex RegisterBindlessResource(
+        rhi::IRHIBuffer*,
+        rhi::RHIBindlessBufferView = rhi::RHIBindlessBufferView::ReadOnly) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
     void UnregisterBindlessResource(rhi::BindlessIndex) override {}
@@ -1026,6 +1104,68 @@ void TestExecuteBatchesBarrierSubmission()
     assert(device.graphicsQueue.lastSubmitCommandListCount == 1);
 }
 
+void TestExecuteRecordsTimestampProfiling()
+{
+    ExecuteFakeDevice device;
+    FakeFence fence;
+    render::TransientResourcePool pool;
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc backBufferDesc{};
+    backBufferDesc.width = 320;
+    backBufferDesc.height = 180;
+    backBufferDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    backBufferDesc.usage = rhi::RHITextureUsage::RenderTarget | rhi::RHITextureUsage::Present;
+    FakeTexture backBuffer(backBufferDesc);
+
+    const render::TextureHandle backBufferHandle =
+        graph.ImportTexture(&backBuffer, rhi::RHIResourceState::Present, rhi::RHIResourceState::Present, "BackBuffer");
+
+    TestPass pass("TimestampedPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteTexture(backBufferHandle, rhi::RHIResourceState::RenderTarget);
+    });
+
+    graph.AddPass(pass);
+    graph.Compile();
+
+    FakeTimestampQueryPool graphicsQueries(8, rhi::RHIQueueType::Graphics);
+    std::array<rhi::IRHITimestampQueryPool*, 3> queryPools{};
+    std::array<uint32_t, 3> queryCounts{};
+    std::vector<render::RenderGraphTimestampPassRange> passRanges(graph.GetCompiledGraph().passes.size());
+    queryPools[0] = &graphicsQueries;
+
+    render::RenderGraph::ExecuteDesc executeDesc{
+        .device = device,
+        .timelineFence = fence,
+        .transientResourcePool = pool,
+        .timestampProfiling = render::RenderGraphTimestampProfilingDesc{
+            .queryPools = std::span<rhi::IRHITimestampQueryPool*>(queryPools.data(), queryPools.size()),
+            .queryCounts = std::span<uint32_t>(queryCounts.data(), queryCounts.size()),
+            .passRanges = std::span<render::RenderGraphTimestampPassRange>(passRanges.data(), passRanges.size()),
+        },
+    };
+
+    const uint64_t signalValue = graph.Execute(executeDesc);
+
+    assert(device.lastCommandList != nullptr);
+    assert(signalValue == 1);
+    assert(device.lastCommandList->timestampResetCalls == 1);
+    assert(device.lastCommandList->lastResetFirstQuery == 0);
+    assert(device.lastCommandList->lastResetQueryCount == graphicsQueries.GetDesc().queryCount);
+    assert(device.lastCommandList->timestampWriteCalls == 2);
+    assert(device.lastCommandList->writtenTimestampIndices.size() == 2);
+    assert(device.lastCommandList->writtenTimestampIndices[0] == 0);
+    assert(device.lastCommandList->writtenTimestampIndices[1] == 1);
+    assert(device.lastCommandList->timestampResolveCalls == 1);
+    assert(device.lastCommandList->lastResolveFirstQuery == 0);
+    assert(device.lastCommandList->lastResolveQueryCount == 2);
+    assert(queryCounts[0] == 2);
+    assert(passRanges[0].valid);
+    assert(passRanges[0].beginQueryIndex == 0);
+    assert(passRanges[0].endQueryIndex == 1);
+}
+
 void TestTransientPoolRecreatesOnAliasSlotChange()
 {
     FakeDevice device;
@@ -1094,6 +1234,7 @@ int main()
     TestUAVBarrier();
     TestDeadPassCullingSkipsUnusedTransientAllocation();
     TestExecuteBatchesBarrierSubmission();
+    TestExecuteRecordsTimestampProfiling();
     TestTransientPoolRecreatesOnAliasSlotChange();
     TestCommandListPoolReusesCompletedLists();
 

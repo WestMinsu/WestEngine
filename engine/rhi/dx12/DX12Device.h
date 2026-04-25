@@ -44,11 +44,15 @@ public:
     std::unique_ptr<IRHIPipeline> CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
     std::unique_ptr<IRHIFence> CreateFence(uint64_t initialValue = 0) override;
     std::unique_ptr<IRHISemaphore> CreateBinarySemaphore() override;
+    std::unique_ptr<IRHITimestampQueryPool> CreateTimestampQueryPool(
+        const RHITimestampQueryPoolDesc& desc) override;
     std::unique_ptr<IRHICommandList> CreateCommandList(RHIQueueType type) override;
     IRHIQueue* GetQueue(RHIQueueType type) override;
     std::unique_ptr<IRHISwapChain> CreateSwapChain(const RHISwapChainDesc& desc) override;
 
-    BindlessIndex RegisterBindlessResource(IRHIBuffer* buffer, bool writable = false) override;
+    BindlessIndex RegisterBindlessResource(
+        IRHIBuffer* buffer,
+        RHIBindlessBufferView view = RHIBindlessBufferView::ReadOnly) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
     BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
     void UnregisterBindlessResource(BindlessIndex index) override;

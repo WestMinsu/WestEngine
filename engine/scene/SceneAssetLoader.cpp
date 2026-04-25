@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <assimp/GltfMaterial.h>
 #include <assimp/Importer.hpp>
 #include <assimp/material.h>
 #include <assimp/postprocess.h>
@@ -752,7 +753,19 @@ bool TryReadSceneCache(const std::filesystem::path& cachePath, const std::filesy
 
     converted.baseColorTextureIndex = ResolveBaseColorTextureIndex(sceneSourceFile, material, textureIndices, asset);
     converted.opacityTextureIndex = ResolveOpacityTextureIndex(sceneSourceFile, material, textureIndices, asset);
-    if (converted.opacityTextureIndex != kInvalidSceneTextureIndex)
+
+    aiString alphaMode;
+    if (material->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) == aiReturn_SUCCESS &&
+        std::string_view(alphaMode.C_Str()) == "MASK")
+    {
+        ai_real alphaCutoff = 0.5f;
+        if (material->Get(AI_MATKEY_GLTF_ALPHACUTOFF, alphaCutoff) != aiReturn_SUCCESS)
+        {
+            alphaCutoff = 0.5f;
+        }
+        converted.alphaCutoff = Clamp01(static_cast<float>(alphaCutoff));
+    }
+    else if (converted.opacityTextureIndex != kInvalidSceneTextureIndex)
     {
         converted.alphaCutoff = kDefaultOpacityAlphaCutoff;
     }

@@ -18,6 +18,7 @@
 #include "rhi/vulkan/VulkanSampler.h"
 #include "rhi/vulkan/VulkanSemaphore.h"
 #include "rhi/vulkan/VulkanSwapChain.h"
+#include "rhi/vulkan/VulkanTimestampQueryPool.h"
 #include "rhi/vulkan/VulkanTexture.h"
 
 // Win32 surface extension name — defined directly to avoid pulling in Windows headers.
@@ -734,6 +735,30 @@ void VulkanDevice::QueryDeviceCaps()
     m_storageBufferDescriptorSize = descriptorBufferProps.storageBufferDescriptorSize;
     m_maxSamplerAnisotropy = props.limits.maxSamplerAnisotropy;
 
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(m_physicalDevice, &queueFamilyCount, queueFamilies.data());
+
+    const bool hasTimestampPeriod = props.limits.timestampPeriod > 0.0f;
+    const auto queueFamilySupportsTimestamps = [&](uint32_t familyIndex)
+    {
+        return hasTimestampPeriod && familyIndex < queueFamilies.size() &&
+               queueFamilies[familyIndex].timestampValidBits > 0;
+    };
+
+    m_caps.supportsTimestampQueriesByQueue.fill(false);
+    m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Graphics)] =
+        queueFamilySupportsTimestamps(m_graphicsQueueFamily);
+    m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Compute)] =
+        queueFamilySupportsTimestamps(m_computeQueueFamily);
+    m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Copy)] =
+        queueFamilySupportsTimestamps(m_copyQueueFamily);
+    m_caps.supportsTimestampQueries =
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Graphics)] ||
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Compute)] ||
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Copy)];
+
     uint32_t descriptorCapacity = std::min<uint32_t>(
         kBindlessCapacity,
         std::min(props.limits.maxDescriptorSetSampledImages,
@@ -928,6 +953,21 @@ std::unique_ptr<IRHISemaphore> VulkanDevice::CreateBinarySemaphore()
     auto semaphore = std::make_unique<VulkanSemaphore>();
     semaphore->Initialize(m_device);
     return semaphore;
+}
+
+std::unique_ptr<IRHITimestampQueryPool> VulkanDevice::CreateTimestampQueryPool(
+    const RHITimestampQueryPoolDesc& desc)
+{
+    if (!m_caps.SupportsTimestampQueries(desc.queueType))
+    {
+        WEST_LOG_WARNING(LogCategory::RHI, "Vulkan timestamp queries are not supported for queue {}.",
+                         QueueTypeIndex(desc.queueType));
+        return nullptr;
+    }
+
+    auto queryPool = std::make_unique<VulkanTimestampQueryPool>();
+    queryPool->Initialize(this, desc);
+    return queryPool;
 }
 
 std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(RHIQueueType type)
@@ -1145,7 +1185,7 @@ std::unique_ptr<IRHIPipeline> VulkanDevice::CreateComputePipeline(const RHICompu
     return pipeline;
 }
 
-BindlessIndex VulkanDevice::RegisterBindlessResource(IRHIBuffer* buffer, bool /*writable*/)
+BindlessIndex VulkanDevice::RegisterBindlessResource(IRHIBuffer* buffer, RHIBindlessBufferView view)
 {
     WEST_ASSERT(buffer != nullptr);
     WEST_ASSERT(m_bindlessDescriptorMapped != nullptr);
@@ -1153,6 +1193,11 @@ BindlessIndex VulkanDevice::RegisterBindlessResource(IRHIBuffer* buffer, bool /*
 
     auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
     std::lock_guard lock(m_bindlessMutex);
+    if (view == RHIBindlessBufferView::ReadWrite)
+    {
+        WEST_CHECK(HasFlag(buffer->GetDesc().usage, RHIBufferUsage::StorageBuffer),
+                   "Vulkan read-write bindless buffer requires StorageBuffer usage");
+    }
 
     BindlessIndex index = m_bindlessPool.Allocate();
     if (index == kInvalidBindlessIndex)

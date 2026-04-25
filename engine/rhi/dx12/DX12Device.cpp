@@ -13,6 +13,7 @@
 #include "rhi/dx12/DX12Sampler.h"
 #include "rhi/dx12/DX12Semaphore.h"
 #include "rhi/dx12/DX12SwapChain.h"
+#include "rhi/dx12/DX12TimestampQueryPool.h"
 #include "rhi/dx12/DX12Texture.h"
 #include "rhi/common/FormatConversion.h"
 #include "rhi/interface/IRHIBuffer.h"
@@ -31,6 +32,20 @@ namespace west::rhi
 
 namespace
 {
+
+[[nodiscard]] const char* QueueTypeName(RHIQueueType queueType)
+{
+    switch (queueType)
+    {
+    case RHIQueueType::Graphics:
+        return "graphics";
+    case RHIQueueType::Compute:
+        return "compute";
+    case RHIQueueType::Copy:
+        return "copy";
+    }
+    return "unknown";
+}
 
 [[nodiscard]] DXGI_FORMAT ToDX12ShaderResourceViewFormat(RHIFormat format)
 {
@@ -410,6 +425,22 @@ void DX12Device::QueryDeviceCaps()
             m_caps.maxBindlessResources = 1000000; // Effectively unbounded
         }
     }
+
+    m_caps.supportsTimestampQueriesByQueue.fill(false);
+    m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Graphics)] = true;
+    m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Compute)] = true;
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS3 options3{};
+    if (SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &options3, sizeof(options3))))
+    {
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Copy)] =
+            options3.CopyQueueTimestampQueriesSupported != FALSE;
+    }
+
+    m_caps.supportsTimestampQueries =
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Graphics)] ||
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Compute)] ||
+        m_caps.supportsTimestampQueriesByQueue[QueueTypeIndex(RHIQueueType::Copy)];
 }
 
 void DX12Device::CreateGlobalRootSignature()
@@ -501,6 +532,7 @@ void DX12Device::CreateBindlessHeaps()
     m_samplerDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
     m_bindlessPool.Initialize(capacity);
     m_bindlessPendingFree.assign(capacity, 0);
+    m_caps.maxBindlessResources = capacity;
 
     WEST_LOG_INFO(LogCategory::RHI, "DX12 bindless heaps created (capacity={}).", capacity);
 }
@@ -532,6 +564,21 @@ std::unique_ptr<IRHISemaphore> DX12Device::CreateBinarySemaphore()
 {
     // DX12 doesn't need binary semaphores — Fence handles everything
     return std::make_unique<DX12Semaphore>();
+}
+
+std::unique_ptr<IRHITimestampQueryPool> DX12Device::CreateTimestampQueryPool(
+    const RHITimestampQueryPoolDesc& desc)
+{
+    if (!m_caps.SupportsTimestampQueries(desc.queueType))
+    {
+        WEST_LOG_WARNING(LogCategory::RHI, "DX12 timestamp queries are not supported for {} queue.",
+                         QueueTypeName(desc.queueType));
+        return nullptr;
+    }
+
+    auto queryPool = std::make_unique<DX12TimestampQueryPool>();
+    queryPool->Initialize(this, desc);
+    return queryPool;
 }
 
 std::unique_ptr<IRHICommandList> DX12Device::CreateCommandList(RHIQueueType type)
@@ -709,7 +756,7 @@ std::unique_ptr<IRHIPipeline> DX12Device::CreateComputePipeline(const RHICompute
     return pipeline;
 }
 
-BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer, bool writable)
+BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer, RHIBindlessBufferView view)
 {
     WEST_ASSERT(buffer != nullptr);
 
@@ -724,6 +771,7 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer, bool writ
     }
 
     const RHIBufferDesc& desc = buffer->GetDesc();
+    const bool writable = view == RHIBindlessBufferView::ReadWrite;
     if (writable)
     {
         WEST_CHECK(HasFlag(desc.usage, RHIBufferUsage::StorageBuffer),

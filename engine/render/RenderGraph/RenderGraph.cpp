@@ -10,8 +10,10 @@
 #include "rhi/interface/IRHIFence.h"
 #include "rhi/interface/IRHIQueue.h"
 #include "rhi/interface/IRHISemaphore.h"
+#include "rhi/interface/IRHITimestampQueryPool.h"
 #include "rhi/interface/IRHITexture.h"
 
+#include <array>
 #include <memory>
 #include <string>
 
@@ -82,6 +84,11 @@ void RecordResolvedBarriers(rhi::IRHICommandList& commandList, std::span<const C
     }
 
     commandList.ResourceBarriers(std::span<const rhi::RHIBarrierDesc>(resolvedBarriers.data(), resolvedBarriers.size()));
+}
+
+[[nodiscard]] bool HasTimestampProfiling(const RenderGraphTimestampProfilingDesc& profiling)
+{
+    return !profiling.queryPools.empty() && !profiling.queryCounts.empty() && !profiling.passRanges.empty();
 }
 
 } // namespace
@@ -328,6 +335,16 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
         Compile();
     }
 
+    std::vector<uint64_t> batchSignalValues(m_compiledGraph.queueBatches.size(), 0);
+    for (uint32_t batchIndex = 0; batchIndex < m_compiledGraph.queueBatches.size(); ++batchIndex)
+    {
+        batchSignalValues[batchIndex] = desc.timelineFence.AdvanceValue();
+    }
+    if (!batchSignalValues.empty())
+    {
+        desc.device.SetCurrentFrameFenceValue(batchSignalValues.back());
+    }
+
     desc.transientResourcePool.Prepare(desc.device, m_compiledGraph);
 
     std::vector<rhi::IRHITexture*> textures(m_compiledGraph.resources.size(), nullptr);
@@ -349,8 +366,21 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
     }
 
     RenderGraphContext context(desc.device, m_compiledGraph, textures, buffers);
-    std::vector<uint64_t> batchSignalValues(m_compiledGraph.queueBatches.size(), 0);
     std::vector<rhi::RHIBarrierDesc> resolvedBarriers;
+    std::array<bool, 3> timestampPoolReset{};
+    const bool timestampsEnabled = HasTimestampProfiling(desc.timestampProfiling);
+
+    if (timestampsEnabled)
+    {
+        for (uint32_t& queryCount : desc.timestampProfiling.queryCounts)
+        {
+            queryCount = 0;
+        }
+        for (RenderGraphTimestampPassRange& passRange : desc.timestampProfiling.passRanges)
+        {
+            passRange = {};
+        }
+    }
 
     for (uint32_t batchIndex = 0; batchIndex < m_compiledGraph.queueBatches.size(); ++batchIndex)
     {
@@ -377,20 +407,68 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
         commandList->Reset();
         commandList->Begin();
 
+        rhi::IRHITimestampQueryPool* timestampQueryPool = nullptr;
+        uint32_t timestampQueueIndex = rhi::QueueTypeIndex(batch.queueType);
+        if (timestampsEnabled && timestampQueueIndex < desc.timestampProfiling.queryPools.size() &&
+            timestampQueueIndex < desc.timestampProfiling.queryCounts.size() &&
+            timestampQueueIndex < timestampPoolReset.size())
+        {
+            timestampQueryPool = desc.timestampProfiling.queryPools[timestampQueueIndex];
+            if (timestampQueryPool != nullptr && !timestampPoolReset[timestampQueueIndex])
+            {
+                commandList->ResetTimestampQueries(timestampQueryPool, 0, timestampQueryPool->GetDesc().queryCount);
+                timestampPoolReset[timestampQueueIndex] = true;
+            }
+        }
+
+        const uint32_t batchFirstTimestampQuery =
+            timestampQueryPool != nullptr ? desc.timestampProfiling.queryCounts[timestampQueueIndex] : 0;
+
         for (uint32_t passIndex = batch.beginPass; passIndex <= batch.endPass; ++passIndex)
         {
             const CompiledPassInfo& pass = m_compiledGraph.passes[passIndex];
             RecordResolvedBarriers(*commandList, pass.preBarriers, textures, buffers, resolvedBarriers);
+
+            if (timestampQueryPool != nullptr)
+            {
+                uint32_t& queryCount = desc.timestampProfiling.queryCounts[timestampQueueIndex];
+                WEST_ASSERT(queryCount + 2 <= timestampQueryPool->GetDesc().queryCount);
+
+                const uint32_t beginQueryIndex = queryCount++;
+                const uint32_t endQueryIndex = queryCount++;
+                commandList->WriteTimestamp(timestampQueryPool, beginQueryIndex);
+
+                pass.pass->Execute(context, *commandList);
+
+                commandList->WriteTimestamp(timestampQueryPool, endQueryIndex);
+
+                if (passIndex < desc.timestampProfiling.passRanges.size())
+                {
+                    desc.timestampProfiling.passRanges[passIndex] = RenderGraphTimestampPassRange{
+                        .valid = true,
+                        .queueType = batch.queueType,
+                        .beginQueryIndex = beginQueryIndex,
+                        .endQueryIndex = endQueryIndex,
+                    };
+                }
+                continue;
+            }
 
             pass.pass->Execute(context, *commandList);
         }
 
         RecordResolvedBarriers(*commandList, batch.postBarriers, textures, buffers, resolvedBarriers);
 
+        if (timestampQueryPool != nullptr)
+        {
+            const uint32_t batchQueryCount =
+                desc.timestampProfiling.queryCounts[timestampQueueIndex] - batchFirstTimestampQuery;
+            commandList->ResolveTimestampQueries(timestampQueryPool, batchFirstTimestampQuery, batchQueryCount);
+        }
+
         commandList->End();
 
-        const uint64_t signalValue = desc.timelineFence.AdvanceValue();
-        batchSignalValues[batchIndex] = signalValue;
+        const uint64_t signalValue = batchSignalValues[batchIndex];
 
         std::vector<rhi::IRHICommandList*> commandLists = {commandList};
         std::vector<rhi::RHITimelineWaitDesc> timelineWaits;

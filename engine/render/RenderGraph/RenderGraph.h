@@ -20,10 +20,26 @@ class IRHIDevice;
 class IRHIFence;
 class IRHISemaphore;
 class IRHITexture;
+class IRHITimestampQueryPool;
 } // namespace west::rhi
 
 namespace west::render
 {
+
+struct RenderGraphTimestampPassRange
+{
+    bool valid = false;
+    rhi::RHIQueueType queueType = rhi::RHIQueueType::Graphics;
+    uint32_t beginQueryIndex = kInvalidRenderGraphIndex;
+    uint32_t endQueryIndex = kInvalidRenderGraphIndex;
+};
+
+struct RenderGraphTimestampProfilingDesc
+{
+    std::span<rhi::IRHITimestampQueryPool*> queryPools;
+    std::span<uint32_t> queryCounts;
+    std::span<RenderGraphTimestampPassRange> passRanges;
+};
 
 class RenderGraphBuilder
 {
@@ -93,6 +109,7 @@ public:
         CommandListPool* commandListPool = nullptr;
         rhi::IRHISemaphore* waitSemaphore = nullptr;
         rhi::IRHISemaphore* signalSemaphore = nullptr;
+        RenderGraphTimestampProfilingDesc timestampProfiling{};
     };
 
     TextureHandle ImportTexture(rhi::IRHITexture* texture, rhi::RHIResourceState initialState,

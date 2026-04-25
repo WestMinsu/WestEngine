@@ -108,8 +108,11 @@ void TransientResourcePool::Prepare(rhi::IRHIDevice& device, const CompiledRende
                 (HasFlag(resource.bufferDesc.usage, rhi::RHIBufferUsage::ConstantBuffer) ||
                  HasFlag(resource.bufferDesc.usage, rhi::RHIBufferUsage::StorageBuffer)))
             {
-                const bool writable = HasFlag(resource.bufferDesc.usage, rhi::RHIBufferUsage::StorageBuffer);
-                device.RegisterBindlessResource(m_buffers[resourceIndex].get(), writable);
+                const rhi::RHIBindlessBufferView view =
+                    HasFlag(resource.bufferDesc.usage, rhi::RHIBufferUsage::StorageBuffer)
+                        ? rhi::RHIBindlessBufferView::ReadWrite
+                        : rhi::RHIBindlessBufferView::ReadOnly;
+                device.RegisterBindlessResource(m_buffers[resourceIndex].get(), view);
             }
         }
     }
