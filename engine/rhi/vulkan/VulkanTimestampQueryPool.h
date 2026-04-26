@@ -17,6 +17,10 @@ class VulkanTimestampQueryPool final : public IRHITimestampQueryPool
 public:
     VulkanTimestampQueryPool() = default;
     ~VulkanTimestampQueryPool() override;
+    VulkanTimestampQueryPool(const VulkanTimestampQueryPool&) = delete;
+    VulkanTimestampQueryPool& operator=(const VulkanTimestampQueryPool&) = delete;
+    VulkanTimestampQueryPool(VulkanTimestampQueryPool&&) = delete;
+    VulkanTimestampQueryPool& operator=(VulkanTimestampQueryPool&&) = delete;
 
     void Initialize(VulkanDevice* device, const RHITimestampQueryPoolDesc& desc);
 

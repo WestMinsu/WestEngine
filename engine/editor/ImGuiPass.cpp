@@ -20,7 +20,8 @@ void ImGuiPass::Configure(render::TextureHandle backBuffer)
 void ImGuiPass::Setup(render::RenderGraphBuilder& builder)
 {
     WEST_ASSERT(m_backBuffer.IsValid());
-    builder.WriteTexture(m_backBuffer, rhi::RHIResourceState::RenderTarget);
+    builder.WriteTexture(m_backBuffer, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
 }
 
 void ImGuiPass::Execute(render::RenderGraphContext& context, rhi::IRHICommandList& commandList)

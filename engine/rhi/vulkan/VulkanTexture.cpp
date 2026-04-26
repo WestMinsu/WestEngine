@@ -8,6 +8,8 @@
 #include "rhi/vulkan/VulkanDevice.h"
 #include "rhi/vulkan/VulkanMemoryAllocator.h"
 
+#include <utility>
+
 namespace west::rhi
 {
 
@@ -26,6 +28,26 @@ namespace
     default:
         return false;
     }
+}
+
+[[nodiscard]] bool IsStencilFormat(RHIFormat format)
+{
+    return format == RHIFormat::D24_UNORM_S8_UINT || format == RHIFormat::D32_FLOAT_S8_UINT;
+}
+
+[[nodiscard]] VkImageAspectFlags GetFormatAspectMask(RHIFormat format)
+{
+    if (IsDepthFormat(format))
+    {
+        VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (IsStencilFormat(format))
+        {
+            aspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+        return aspects;
+    }
+
+    return VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
 [[nodiscard]] VkImageCreateInfo BuildImageCreateInfo(const RHITextureDesc& desc, bool allowAliasing)
@@ -71,8 +93,7 @@ void CreateImageView(VulkanDevice* device, VkImage image, const RHITextureDesc& 
     viewInfo.image = image;
     viewInfo.viewType = desc.dimension == RHITextureDim::TexCube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = static_cast<VkFormat>(ToVkFormat(desc.format));
-    viewInfo.subresourceRange.aspectMask = IsDepthFormat(desc.format) ? VK_IMAGE_ASPECT_DEPTH_BIT
-                                                                      : VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.aspectMask = GetFormatAspectMask(desc.format);
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = desc.mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
@@ -83,8 +104,27 @@ void CreateImageView(VulkanDevice* device, VkImage image, const RHITextureDesc& 
 
 } // namespace
 
+VulkanTexture::VulkanTexture(VulkanTexture&& other) noexcept
+    : m_vmaAllocator(std::exchange(other.m_vmaAllocator, VK_NULL_HANDLE))
+    , m_allocation(std::exchange(other.m_allocation, VK_NULL_HANDLE))
+    , m_aliasingAllocation(std::move(other.m_aliasingAllocation))
+    , m_image(std::exchange(other.m_image, VK_NULL_HANDLE))
+    , m_imageView(std::exchange(other.m_imageView, VK_NULL_HANDLE))
+    , m_desc(other.m_desc)
+    , m_bindlessIndex(std::exchange(other.m_bindlessIndex, kInvalidBindlessIndex))
+    , m_device(std::exchange(other.m_device, nullptr))
+    , m_ownsImage(std::exchange(other.m_ownsImage, false))
+    , m_isAliased(std::exchange(other.m_isAliased, false))
+{
+}
+
 VulkanTexture::~VulkanTexture()
 {
+    if (m_device && m_bindlessIndex != kInvalidBindlessIndex)
+    {
+        m_device->UnregisterBindlessResource(this);
+    }
+
     if (m_isAliased && m_image)
     {
         VkDevice device = m_device ? m_device->GetVkDevice() : VK_NULL_HANDLE;

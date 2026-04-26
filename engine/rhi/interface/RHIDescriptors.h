@@ -29,7 +29,7 @@ class IRHIPipeline;
 struct RHIDeviceConfig
 {
     bool enableValidation = true;              // Validation Layer / Debug Layer
-    bool enableDX12GPUBasedValidation = false; // D3D12 GPU-Based Validation; requires enableValidation
+    bool enableGPUBasedValidation = false; // Backend-specific GPU validation; requires enableValidation
     bool enableGPUCrashDiag = true;            // DRED / VK_EXT_device_fault
     uint32_t preferredGPUIndex = UINT32_MAX; // UINT32_MAX = auto-select high-performance GPU
     void* windowHandle = nullptr;   // HWND (Win32)
@@ -47,6 +47,7 @@ struct RHIDeviceCaps
     bool supportsTimestampQueries = false;
     std::array<bool, kRHIQueueTypeCount> supportsTimestampQueriesByQueue{};
     uint32_t maxBindlessResources = 0;
+    uint32_t maxBindlessSamplers = 0;
     uint64_t dedicatedVideoMemory = 0; // bytes
 
     [[nodiscard]] bool SupportsTimestampQueries(RHIQueueType queueType) const
@@ -253,6 +254,8 @@ struct RHIBarrierDesc
     IRHIBuffer* buffer = nullptr; // texture or buffer, one is valid
     RHIResourceState stateBefore = RHIResourceState::Undefined;
     RHIResourceState stateAfter = RHIResourceState::Common;
+    RHIPipelineStage srcStageMask = RHIPipelineStage::Auto;
+    RHIPipelineStage dstStageMask = RHIPipelineStage::Auto;
 
     // Aliasing (Render Graph Transient Resource)
     IRHITexture* aliasBefore = nullptr;
@@ -282,6 +285,7 @@ struct RHITimelineWaitDesc
 {
     IRHIFence* fence = nullptr;
     uint64_t value = 0;
+    RHIPipelineStage stageMask = RHIPipelineStage::AllCommands;
 };
 
 struct RHITimelineSignalDesc

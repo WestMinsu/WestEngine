@@ -9,9 +9,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <format>
+#include <limits>
+#include <system_error>
 
 namespace west::scene
 {
@@ -55,6 +59,44 @@ constexpr std::array<uint8_t, 12> kKtx2Identifier = {0xAB, 0x4B, 0x54, 0x58, 0x2
                                                       0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
 constexpr uint32_t kVkFormatR16G16B16A16Sfloat = 97;
 constexpr uint32_t kRGBA16FloatBytesPerPixel = 8;
+constexpr uint32_t kTextureAssetCacheMagic = 0x58455457; // "WTEX" little-endian
+constexpr uint32_t kTextureAssetCacheVersion = 2;
+
+using Clock = std::chrono::steady_clock;
+
+#pragma pack(push, 1)
+struct TextureAssetCacheHeader
+{
+    uint32_t magic = kTextureAssetCacheMagic;
+    uint32_t version = kTextureAssetCacheVersion;
+    int64_t sourceWriteTime = 0;
+    uint64_t sourceFileSize = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t depth = 0;
+    uint32_t mipLevels = 0;
+    uint32_t arrayLayers = 0;
+    uint32_t format = 0;
+    uint32_t dimension = 0;
+    uint32_t subresourceCount = 0;
+    uint32_t maxDimension = 0;
+    uint64_t byteCount = 0;
+};
+
+struct TextureSubresourceCacheEntry
+{
+    uint64_t sourceOffsetBytes = 0;
+    uint32_t rowPitchBytes = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t depth = 0;
+    uint32_t mipLevel = 0;
+    uint32_t arrayLayer = 0;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(TextureAssetCacheHeader) == 68);
+static_assert(sizeof(TextureSubresourceCacheEntry) == 32);
 
 [[nodiscard]] uint32_t ComputeMipLevelCount(uint32_t width, uint32_t height)
 {
@@ -140,6 +182,21 @@ constexpr uint32_t kRGBA16FloatBytesPerPixel = 8;
     return mipPixels;
 }
 
+void DownsampleImageToMaxDimensionRGBA8(ImageData& image, bool sRGB, uint32_t maxDimension)
+{
+    if (maxDimension == 0)
+    {
+        return;
+    }
+
+    while (std::max(image.width, image.height) > maxDimension)
+    {
+        image.pixelsRGBA8 = BuildNextMipRGBA8(image.pixelsRGBA8, image.width, image.height, sRGB);
+        image.width = std::max(1u, image.width >> 1);
+        image.height = std::max(1u, image.height >> 1);
+    }
+}
+
 [[nodiscard]] std::filesystem::path NormalizePath(const std::filesystem::path& path)
 {
     std::error_code errorCode;
@@ -150,6 +207,56 @@ constexpr uint32_t kRGBA16FloatBytesPerPixel = 8;
     }
 
     return path.lexically_normal();
+}
+
+[[nodiscard]] std::filesystem::path BuildTextureAssetCachePath(const std::filesystem::path& sourcePath,
+                                                               bool sRGB, bool generateMipChain,
+                                                               uint32_t maxDimension)
+{
+    const char* colorSpace = sRGB ? "srgb" : "linear";
+    const char* mipMode = generateMipChain ? "mips" : "base";
+    const std::string dimensionMode =
+        maxDimension > 0 ? std::format("max{}", maxDimension) : std::string("native");
+    return sourcePath.parent_path() / std::format("{}.{}.{}.{}.westtexasset.bin",
+                                                  sourcePath.filename().string(), colorSpace, mipMode, dimensionMode);
+}
+
+[[nodiscard]] int64_t GetLastWriteTimeTicks(const std::filesystem::path& path)
+{
+    std::error_code errorCode;
+    const auto timestamp = std::filesystem::last_write_time(path, errorCode);
+    if (errorCode)
+    {
+        return 0;
+    }
+
+    return static_cast<int64_t>(timestamp.time_since_epoch().count());
+}
+
+[[nodiscard]] uint64_t GetFileSizeBytes(const std::filesystem::path& path)
+{
+    std::error_code errorCode;
+    const auto fileSize = std::filesystem::file_size(path, errorCode);
+    if (errorCode)
+    {
+        return 0;
+    }
+
+    return static_cast<uint64_t>(fileSize);
+}
+
+template <typename T>
+bool WriteValue(std::ofstream& stream, const T& value)
+{
+    stream.write(reinterpret_cast<const char*>(&value), sizeof(T));
+    return stream.good();
+}
+
+template <typename T>
+bool ReadValue(std::ifstream& stream, T& value)
+{
+    stream.read(reinterpret_cast<char*>(&value), sizeof(T));
+    return stream.good();
 }
 
 [[nodiscard]] std::optional<std::vector<uint8_t>> ReadFileBinary(const std::filesystem::path& path)
@@ -177,6 +284,195 @@ constexpr uint32_t kRGBA16FloatBytesPerPixel = 8;
     }
 
     return bytes;
+}
+
+bool IsTextureAssetCacheHeaderValid(const TextureAssetCacheHeader& header, const std::filesystem::path& sourcePath,
+                                    bool sRGB, bool generateMipChain, uint32_t maxDimension)
+{
+    if (header.magic != kTextureAssetCacheMagic || header.version != kTextureAssetCacheVersion)
+    {
+        return false;
+    }
+
+    if (header.sourceWriteTime != GetLastWriteTimeTicks(sourcePath) ||
+        header.sourceFileSize != GetFileSizeBytes(sourcePath))
+    {
+        return false;
+    }
+
+    if (header.width == 0 || header.height == 0 || header.depth != 1 || header.arrayLayers != 1)
+    {
+        return false;
+    }
+
+    if (header.maxDimension != maxDimension)
+    {
+        return false;
+    }
+
+    if (maxDimension > 0 && std::max(header.width, header.height) > maxDimension)
+    {
+        return false;
+    }
+
+    const rhi::RHIFormat expectedFormat = sRGB ? rhi::RHIFormat::RGBA8_UNORM_SRGB : rhi::RHIFormat::RGBA8_UNORM;
+    if (header.format != static_cast<uint32_t>(expectedFormat) ||
+        header.dimension != static_cast<uint32_t>(rhi::RHITextureDim::Tex2D))
+    {
+        return false;
+    }
+
+    const uint32_t expectedMipLevels = generateMipChain ? ComputeMipLevelCount(header.width, header.height) : 1;
+    if (header.mipLevels != expectedMipLevels || header.subresourceCount != header.mipLevels)
+    {
+        return false;
+    }
+
+    if (header.byteCount == 0 || header.byteCount > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool TryReadTextureAssetCache(const std::filesystem::path& cachePath, const std::filesystem::path& sourcePath,
+                              std::string debugName, bool sRGB, bool generateMipChain, uint32_t maxDimension,
+                              TextureAssetData& texture)
+{
+    std::ifstream stream(cachePath, std::ios::binary);
+    if (!stream.is_open())
+    {
+        return false;
+    }
+
+    TextureAssetCacheHeader header{};
+    if (!ReadValue(stream, header) ||
+        !IsTextureAssetCacheHeaderValid(header, sourcePath, sRGB, generateMipChain, maxDimension))
+    {
+        return false;
+    }
+
+    std::vector<TextureSubresourceCacheEntry> cacheEntries(header.subresourceCount);
+    if (!cacheEntries.empty())
+    {
+        stream.read(reinterpret_cast<char*>(cacheEntries.data()),
+                    static_cast<std::streamsize>(cacheEntries.size() * sizeof(TextureSubresourceCacheEntry)));
+        if (!stream.good())
+        {
+            return false;
+        }
+    }
+
+    std::vector<TextureSubresourceData> subresources;
+    subresources.reserve(cacheEntries.size());
+    for (const TextureSubresourceCacheEntry& entry : cacheEntries)
+    {
+        if (entry.rowPitchBytes == 0 || entry.width == 0 || entry.height == 0 || entry.depth != 1 ||
+            entry.arrayLayer != 0 || entry.mipLevel >= header.mipLevels)
+        {
+            return false;
+        }
+
+        const uint64_t subresourceBytes =
+            static_cast<uint64_t>(entry.rowPitchBytes) * entry.height * entry.depth;
+        if (entry.sourceOffsetBytes > header.byteCount || subresourceBytes > header.byteCount - entry.sourceOffsetBytes)
+        {
+            return false;
+        }
+
+        subresources.push_back({
+            .sourceOffsetBytes = entry.sourceOffsetBytes,
+            .rowPitchBytes = entry.rowPitchBytes,
+            .width = entry.width,
+            .height = entry.height,
+            .depth = entry.depth,
+            .mipLevel = entry.mipLevel,
+            .arrayLayer = entry.arrayLayer,
+        });
+    }
+
+    std::vector<uint8_t> bytes(static_cast<size_t>(header.byteCount));
+    if (!bytes.empty())
+    {
+        stream.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        if (!stream.good())
+        {
+            return false;
+        }
+    }
+
+    texture = {};
+    texture.debugName = std::move(debugName);
+    texture.width = header.width;
+    texture.height = header.height;
+    texture.depth = header.depth;
+    texture.mipLevels = header.mipLevels;
+    texture.arrayLayers = header.arrayLayers;
+    texture.format = static_cast<rhi::RHIFormat>(header.format);
+    texture.dimension = static_cast<rhi::RHITextureDim>(header.dimension);
+    texture.bytes = std::move(bytes);
+    texture.subresources = std::move(subresources);
+    return true;
+}
+
+bool WriteTextureAssetCache(const std::filesystem::path& cachePath, const std::filesystem::path& sourcePath,
+                            const TextureAssetData& texture, uint32_t maxDimension)
+{
+    if (texture.width == 0 || texture.height == 0 || texture.depth != 1 || texture.arrayLayers != 1 ||
+        texture.dimension != rhi::RHITextureDim::Tex2D || texture.subresources.empty() || texture.bytes.empty())
+    {
+        return false;
+    }
+
+    std::ofstream stream(cachePath, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open())
+    {
+        return false;
+    }
+
+    const TextureAssetCacheHeader header{
+        .magic = kTextureAssetCacheMagic,
+        .version = kTextureAssetCacheVersion,
+        .sourceWriteTime = GetLastWriteTimeTicks(sourcePath),
+        .sourceFileSize = GetFileSizeBytes(sourcePath),
+        .width = texture.width,
+        .height = texture.height,
+        .depth = texture.depth,
+        .mipLevels = texture.mipLevels,
+        .arrayLayers = texture.arrayLayers,
+        .format = static_cast<uint32_t>(texture.format),
+        .dimension = static_cast<uint32_t>(texture.dimension),
+        .subresourceCount = static_cast<uint32_t>(texture.subresources.size()),
+        .maxDimension = maxDimension,
+        .byteCount = static_cast<uint64_t>(texture.bytes.size()),
+    };
+
+    if (!WriteValue(stream, header))
+    {
+        return false;
+    }
+
+    for (const TextureSubresourceData& subresource : texture.subresources)
+    {
+        const TextureSubresourceCacheEntry entry{
+            .sourceOffsetBytes = subresource.sourceOffsetBytes,
+            .rowPitchBytes = subresource.rowPitchBytes,
+            .width = subresource.width,
+            .height = subresource.height,
+            .depth = subresource.depth,
+            .mipLevel = subresource.mipLevel,
+            .arrayLayer = subresource.arrayLayer,
+        };
+        if (!WriteValue(stream, entry))
+        {
+            return false;
+        }
+    }
+
+    stream.write(reinterpret_cast<const char*>(texture.bytes.data()),
+                 static_cast<std::streamsize>(texture.bytes.size()));
+    return stream.good();
 }
 
 } // namespace
@@ -243,15 +539,82 @@ TextureAssetData BuildTexture2DAssetRGBA8(std::string debugName, ImageData image
 }
 
 std::optional<TextureAssetData> LoadTexture2DAssetRGBA8(const std::filesystem::path& sourcePath, bool sRGB,
-                                                        const ImageLoadOptions& options)
+                                                        const TextureAssetLoadOptions& options)
 {
-    std::optional<LoadedImageData> loadedImage = LoadImageRGBA8(sourcePath, options);
-    if (!loadedImage.has_value())
+    std::optional<LoadedTextureAssetData> loadedTexture =
+        LoadTexture2DAssetRGBA8WithStats(sourcePath, sourcePath.filename().string(), sRGB, options);
+    if (!loadedTexture.has_value())
     {
         return std::nullopt;
     }
 
-    return BuildTexture2DAssetRGBA8(sourcePath.filename().string(), std::move(loadedImage->image), sRGB);
+    return std::move(loadedTexture->texture);
+}
+
+std::optional<LoadedTextureAssetData> LoadTexture2DAssetRGBA8WithStats(const std::filesystem::path& sourcePath,
+                                                                       std::string debugName, bool sRGB,
+                                                                       const TextureAssetLoadOptions& options)
+{
+    const auto totalStart = Clock::now();
+    const std::filesystem::path normalizedSource = NormalizePath(sourcePath);
+    const std::filesystem::path cachePath =
+        BuildTextureAssetCachePath(normalizedSource, sRGB, options.generateMipChain, options.maxDimension);
+
+    LoadedTextureAssetData loadedTexture{};
+
+    if (options.enableCache)
+    {
+        const auto cacheReadStart = Clock::now();
+        if (TryReadTextureAssetCache(cachePath, normalizedSource, debugName, sRGB, options.generateMipChain,
+                                     options.maxDimension,
+                                     loadedTexture.texture))
+        {
+            loadedTexture.stats.usedCache = true;
+            loadedTexture.stats.cacheReadMs =
+                std::chrono::duration<double, std::milli>(Clock::now() - cacheReadStart).count();
+            loadedTexture.stats.totalLoadMs =
+                std::chrono::duration<double, std::milli>(Clock::now() - totalStart).count();
+            return loadedTexture;
+        }
+
+        loadedTexture.stats.cacheReadMs =
+            std::chrono::duration<double, std::milli>(Clock::now() - cacheReadStart).count();
+    }
+
+    ImageLoadOptions imageLoadOptions{};
+    imageLoadOptions.enableCache = options.enableCache;
+    std::optional<LoadedImageData> loadedImage = LoadImageRGBA8(normalizedSource, imageLoadOptions);
+    if (!loadedImage.has_value())
+    {
+        loadedTexture.stats.totalLoadMs =
+            std::chrono::duration<double, std::milli>(Clock::now() - totalStart).count();
+        return std::nullopt;
+    }
+
+    loadedTexture.stats.usedSourceImageCache = loadedImage->stats.usedCache;
+    loadedTexture.stats.sourceImageCacheWritten = loadedImage->stats.cacheWritten;
+    loadedTexture.stats.sourceImageCacheReadMs = loadedImage->stats.cacheReadMs;
+    loadedTexture.stats.decodeMs = loadedImage->stats.decodeMs;
+
+    const auto mipBuildStart = Clock::now();
+    DownsampleImageToMaxDimensionRGBA8(loadedImage->image, sRGB, options.maxDimension);
+    loadedTexture.texture =
+        BuildTexture2DAssetRGBA8(std::move(debugName), std::move(loadedImage->image), sRGB, options.generateMipChain);
+    loadedTexture.stats.mipBuildMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - mipBuildStart).count();
+
+    if (options.enableCache)
+    {
+        const auto cacheWriteStart = Clock::now();
+        loadedTexture.stats.cacheWritten =
+            WriteTextureAssetCache(cachePath, normalizedSource, loadedTexture.texture, options.maxDimension);
+        loadedTexture.stats.cacheWriteMs =
+            std::chrono::duration<double, std::milli>(Clock::now() - cacheWriteStart).count();
+    }
+
+    loadedTexture.stats.totalLoadMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - totalStart).count();
+    return loadedTexture;
 }
 
 std::optional<TextureAssetData> LoadKtx2CubemapAsset(const std::filesystem::path& sourcePath)

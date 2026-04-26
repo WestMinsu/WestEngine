@@ -15,6 +15,10 @@ class DX12Queue final : public IRHIQueue
 public:
     DX12Queue() = default;
     ~DX12Queue() override = default;
+    DX12Queue(const DX12Queue&) = delete;
+    DX12Queue& operator=(const DX12Queue&) = delete;
+    DX12Queue(DX12Queue&&) = delete;
+    DX12Queue& operator=(DX12Queue&&) = delete;
 
     /// Initialize the DX12 command queue.
     void Initialize(ID3D12Device* device, RHIQueueType type);

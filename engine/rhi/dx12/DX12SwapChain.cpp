@@ -4,6 +4,7 @@
 // =============================================================================
 #include "rhi/dx12/DX12SwapChain.h"
 
+#include "platform/win32/Win32Headers.h"
 #include "rhi/dx12/DX12Device.h"
 #include "rhi/dx12/DX12Queue.h"
 
@@ -162,9 +163,8 @@ bool DX12SwapChain::Present(IRHISemaphore* /*presentSemaphore*/)
 
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
     {
-        WEST_LOG_FATAL(LogCategory::RHI, "Device removed during Present! HRESULT: 0x{:08X}", static_cast<uint32_t>(hr));
-        // DRED data will be queried in DX12Device destructor
-        return false;
+        WEST_CHECK(false, "Device removed during Present. HRESULT: 0x{:08X}, reason: 0x{:08X}",
+                   static_cast<uint32_t>(hr), static_cast<uint32_t>(m_device->GetD3DDevice()->GetDeviceRemovedReason()));
     }
 
     WEST_HR_CHECK(hr);

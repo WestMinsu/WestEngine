@@ -102,16 +102,18 @@ void DeferredLightingPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_irradianceEnvironment.IsValid());
     WEST_ASSERT(m_brdfLut.IsValid());
 
-    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_worldPosition, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_normalRoughness, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_albedoMetallic, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_shadowMap, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_ambientOcclusion, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_prefilteredEnvironment, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_irradianceEnvironment, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_brdfLut, rhi::RHIResourceState::ShaderResource);
-    builder.WriteTexture(m_sceneColor, rhi::RHIResourceState::RenderTarget);
+    constexpr rhi::RHIPipelineStage pixelStage = rhi::RHIPipelineStage::PixelShader;
+    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_worldPosition, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_normalRoughness, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_albedoMetallic, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_shadowMap, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_ambientOcclusion, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_prefilteredEnvironment, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_irradianceEnvironment, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_brdfLut, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.WriteTexture(m_sceneColor, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
 }
 
 void DeferredLightingPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)
@@ -188,20 +190,12 @@ void DeferredLightingPass::CreatePipeline()
     std::vector<uint8_t> vertexShader;
     std::vector<uint8_t> fragmentShader;
 
-    if (m_backend == rhi::RHIBackend::DX12)
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("DeferredLighting.vs.dxil", vertexShader),
-                   "Failed to load DeferredLighting DXIL vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("DeferredLighting.ps.dxil", fragmentShader),
-                   "Failed to load DeferredLighting DXIL fragment shader");
-    }
-    else
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("DeferredLighting.vs.spv", vertexShader),
-                   "Failed to load DeferredLighting SPIR-V vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("DeferredLighting.ps.spv", fragmentShader),
-                   "Failed to load DeferredLighting SPIR-V fragment shader");
-    }
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "DeferredLighting",
+                                                         shader::ShaderCompiler::Stage::Vertex, vertexShader),
+               "Failed to load DeferredLighting vertex shader");
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "DeferredLighting",
+                                                         shader::ShaderCompiler::Stage::Fragment, fragmentShader),
+               "Failed to load DeferredLighting fragment shader");
 
     const rhi::RHIFormat colorFormat = rhi::RHIFormat::RGBA16_FLOAT;
 

@@ -77,6 +77,11 @@ static VkBorderColor ToVkBorderColor(RHIBorderColor color)
 
 VulkanSampler::~VulkanSampler()
 {
+    if (m_device && m_bindlessIndex != kInvalidBindlessIndex)
+    {
+        m_device->UnregisterBindlessResource(this);
+    }
+
     if (m_sampler && m_device)
     {
         VkDevice device = m_device->GetVkDevice();

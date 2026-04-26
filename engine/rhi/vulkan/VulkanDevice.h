@@ -55,7 +55,9 @@ public:
         RHIBindlessBufferView view = RHIBindlessBufferView::ReadOnly) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
     BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
-    void UnregisterBindlessResource(BindlessIndex index) override;
+    void UnregisterBindlessResource(IRHIBuffer* buffer) override;
+    void UnregisterBindlessResource(IRHITexture* texture) override;
+    void UnregisterBindlessResource(IRHISampler* sampler) override;
 
     void WaitIdle() override;
     RHIBackend GetBackend() const override
@@ -102,6 +104,7 @@ public:
     {
         return m_maxSamplerAnisotropy;
     }
+    void FlushPendingBindlessDescriptorWrites();
 
     uint32_t GetGraphicsQueueFamily() const
     {
@@ -123,10 +126,12 @@ public:
     void FlushDeferredDeletions(uint64_t completedFenceValue) override
     {
         m_deletionQueue.Flush(completedFenceValue);
+        FlushPendingBindlessDescriptorWrites();
     }
     void FlushAllDeferredDeletions() override
     {
         m_deletionQueue.FlushAll();
+        FlushPendingBindlessDescriptorWrites();
     }
     void SetCurrentFrameFenceValue(uint64_t fenceValue) override
     {
@@ -162,6 +167,14 @@ private:
     void LoadDescriptorBufferFunctions();
     void CreateBindlessDescriptors();
     void DestroyBindlessDescriptors();
+    void MarkBindlessDescriptorDirty(VkDeviceSize offset, VkDeviceSize size);
+    void WriteBindlessDescriptorLocked(const VkDescriptorGetInfoEXT& descriptorInfo, VkDeviceSize offset,
+                                       VkDeviceSize size);
+    void ZeroBindlessDescriptorLocked(VkDeviceSize offset, VkDeviceSize size);
+    void FlushPendingBindlessDescriptorWritesLocked();
+    void UnregisterResourceBindlessIndex(BindlessIndex index, BindlessDescriptorKind descriptorKind,
+                                         const char* label);
+    void UnregisterSamplerBindlessIndex(BindlessIndex index);
 
     VkInstance m_instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
@@ -184,7 +197,8 @@ private:
     std::mutex m_transientTextureMutex;
 
     static constexpr uint32_t kBindlessCapacity = 4096;
-    uint32_t m_bindlessCapacity = 0;
+    uint32_t m_bindlessResourceCapacity = 0;
+    uint32_t m_bindlessSamplerCapacity = 0;
     VkDescriptorSetLayout m_bindlessSetLayout = VK_NULL_HANDLE;
     VkBuffer m_bindlessDescriptorBuffer = VK_NULL_HANDLE;
     VmaAllocation m_bindlessDescriptorAllocation = VK_NULL_HANDLE;
@@ -198,9 +212,13 @@ private:
     size_t m_samplerDescriptorSize = 0;
     size_t m_storageBufferDescriptorSize = 0;
     float m_maxSamplerAnisotropy = 1.0f;
-    BindlessPool m_bindlessPool;
-    std::vector<BindlessDescriptorKind> m_bindlessDescriptorKinds;
-    std::vector<uint8_t> m_bindlessPendingFree;
+    BindlessPool m_resourceBindlessPool;
+    BindlessPool m_samplerBindlessPool;
+    std::vector<BindlessDescriptorKind> m_resourceDescriptorKinds;
+    std::vector<uint8_t> m_resourceBindlessPendingFree;
+    std::vector<uint8_t> m_samplerBindlessPendingFree;
+    VkDeviceSize m_bindlessDescriptorDirtyBegin = 0;
+    VkDeviceSize m_bindlessDescriptorDirtyEnd = 0;
     std::mutex m_bindlessMutex;
 
     PFN_vkGetDescriptorSetLayoutSizeEXT m_vkGetDescriptorSetLayoutSizeEXT = nullptr;

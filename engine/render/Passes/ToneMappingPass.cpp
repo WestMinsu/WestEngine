@@ -68,8 +68,10 @@ void ToneMappingPass::Setup(RenderGraphBuilder& builder)
 {
     WEST_ASSERT(m_sceneColor.IsValid());
     WEST_ASSERT(m_backBuffer.IsValid());
-    builder.ReadTexture(m_sceneColor, rhi::RHIResourceState::ShaderResource);
-    builder.WriteTexture(m_backBuffer, rhi::RHIResourceState::RenderTarget);
+    builder.ReadTexture(m_sceneColor, rhi::RHIResourceState::ShaderResource,
+                        rhi::RHIPipelineStage::PixelShader);
+    builder.WriteTexture(m_backBuffer, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
 }
 
 void ToneMappingPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)
@@ -127,20 +129,12 @@ void ToneMappingPass::CreatePipeline()
     std::vector<uint8_t> vertexShader;
     std::vector<uint8_t> fragmentShader;
 
-    if (m_backend == rhi::RHIBackend::DX12)
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ToneMapping.vs.dxil", vertexShader),
-                   "Failed to load ToneMapping DXIL vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ToneMapping.ps.dxil", fragmentShader),
-                   "Failed to load ToneMapping DXIL fragment shader");
-    }
-    else
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ToneMapping.vs.spv", vertexShader),
-                   "Failed to load ToneMapping SPIR-V vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ToneMapping.ps.spv", fragmentShader),
-                   "Failed to load ToneMapping SPIR-V fragment shader");
-    }
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "ToneMapping",
+                                                         shader::ShaderCompiler::Stage::Vertex, vertexShader),
+               "Failed to load ToneMapping vertex shader");
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "ToneMapping",
+                                                         shader::ShaderCompiler::Stage::Fragment, fragmentShader),
+               "Failed to load ToneMapping fragment shader");
 
     const rhi::RHIFormat colorFormat = rhi::RHIFormat::BGRA8_UNORM;
 

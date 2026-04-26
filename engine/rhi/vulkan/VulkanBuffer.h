@@ -20,6 +20,10 @@ class VulkanBuffer final : public IRHIBuffer
 public:
     VulkanBuffer() = default;
     ~VulkanBuffer() override;
+    VulkanBuffer(const VulkanBuffer&) = delete;
+    VulkanBuffer& operator=(const VulkanBuffer&) = delete;
+    VulkanBuffer(VulkanBuffer&&) = delete;
+    VulkanBuffer& operator=(VulkanBuffer&&) = delete;
 
     void Initialize(VulkanDevice* device, const RHIBufferDesc& desc);
 

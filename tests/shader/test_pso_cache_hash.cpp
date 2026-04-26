@@ -139,7 +139,15 @@ public:
         return rhi::kInvalidBindlessIndex;
     }
 
-    void UnregisterBindlessResource(rhi::BindlessIndex) override
+    void UnregisterBindlessResource(rhi::IRHIBuffer*) override
+    {
+    }
+
+    void UnregisterBindlessResource(rhi::IRHITexture*) override
+    {
+    }
+
+    void UnregisterBindlessResource(rhi::IRHISampler*) override
     {
     }
 

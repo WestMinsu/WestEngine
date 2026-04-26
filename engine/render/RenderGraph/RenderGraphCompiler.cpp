@@ -23,6 +23,7 @@ struct ResourceStateTracker
 {
     rhi::RHIResourceState state = rhi::RHIResourceState::Undefined;
     ResourceAccessType lastAccessType = ResourceAccessType::Read;
+    rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::AllCommands;
 };
 
 [[nodiscard]] bool IsReadAccess(ResourceAccessType accessType)
@@ -44,6 +45,95 @@ struct ResourceStateTracker
     }
 
     return IsWriteAccess(previousAccess) || IsWriteAccess(nextAccess);
+}
+
+[[nodiscard]] rhi::RHIPipelineStage DefaultStageForQueue(rhi::RHIQueueType queueType)
+{
+    switch (queueType)
+    {
+    case rhi::RHIQueueType::Graphics:
+        return rhi::RHIPipelineStage::AllGraphics;
+    case rhi::RHIQueueType::Compute:
+        return rhi::RHIPipelineStage::ComputeShader;
+    case rhi::RHIQueueType::Copy:
+        return rhi::RHIPipelineStage::Copy;
+    }
+
+    return rhi::RHIPipelineStage::AllCommands;
+}
+
+[[nodiscard]] rhi::RHIPipelineStage NormalizeStageMask(rhi::RHIPipelineStage stageMask,
+                                                       rhi::RHIPipelineStage fallback)
+{
+    return stageMask == rhi::RHIPipelineStage::Auto ? fallback : stageMask;
+}
+
+[[nodiscard]] rhi::RHIPipelineStage StageForState(rhi::RHIResourceState state, rhi::RHIQueueType queueType)
+{
+    if (state == rhi::RHIResourceState::Undefined)
+    {
+        return rhi::RHIPipelineStage::TopOfPipe;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::RenderTarget))
+    {
+        return rhi::RHIPipelineStage::ColorAttachmentOutput;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::DepthStencilWrite) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::DepthStencilRead))
+    {
+        return rhi::RHIPipelineStage::DepthStencil;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::CopySource) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::CopyDest))
+    {
+        return rhi::RHIPipelineStage::Copy;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::IndirectArgument))
+    {
+        return rhi::RHIPipelineStage::DrawIndirect;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::VertexBuffer) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::IndexBuffer))
+    {
+        return rhi::RHIPipelineStage::VertexInput;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::Present))
+    {
+        return rhi::RHIPipelineStage::BottomOfPipe;
+    }
+    if (rhi::HasFlag(state, rhi::RHIResourceState::ConstantBuffer) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::ShaderResource) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::UnorderedAccess) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::AccelStructRead) ||
+        rhi::HasFlag(state, rhi::RHIResourceState::AccelStructWrite))
+    {
+        return DefaultStageForQueue(queueType);
+    }
+
+    return rhi::RHIPipelineStage::AllCommands;
+}
+
+[[nodiscard]] rhi::RHIPipelineStage StageForUse(const ResourceUse& use, rhi::RHIQueueType queueType)
+{
+    return NormalizeStageMask(use.stageMask, StageForState(use.state, queueType));
+}
+
+void AccumulateStage(rhi::RHIPipelineStage& stageMask, rhi::RHIPipelineStage stage)
+{
+    if (stage == rhi::RHIPipelineStage::Auto)
+    {
+        return;
+    }
+
+    stageMask |= stage;
+}
+
+[[nodiscard]] const ResourceUse* FindResourceUse(const CompiledPassInfo& pass, uint32_t resourceIndex)
+{
+    const auto it = std::find_if(pass.uses.begin(), pass.uses.end(), [resourceIndex](const ResourceUse& use) {
+        return use.resourceIndex == resourceIndex;
+    });
+    return it != pass.uses.end() ? &(*it) : nullptr;
 }
 
 [[nodiscard]] uint64_t EstimateTextureSizeBytes(const rhi::RHITextureDesc& desc)
@@ -508,6 +598,35 @@ void EnsureTerminalBatchWaitsForAllPriorBatches(std::vector<QueueBatchInfo>& que
     }
 }
 
+void ComputeBatchWaitStages(CompiledRenderGraph& compiledGraph)
+{
+    for (QueueBatchInfo& batch : compiledGraph.queueBatches)
+    {
+        rhi::RHIPipelineStage waitStageMask = rhi::RHIPipelineStage::Auto;
+        const rhi::RHIPipelineStage defaultStage = DefaultStageForQueue(batch.queueType);
+
+        for (uint32_t passIndex = batch.beginPass; passIndex <= batch.endPass; ++passIndex)
+        {
+            const CompiledPassInfo& pass = compiledGraph.passes[passIndex];
+            for (const CompiledBarrier& barrier : pass.preBarriers)
+            {
+                AccumulateStage(waitStageMask, NormalizeStageMask(barrier.dstStageMask, defaultStage));
+            }
+            for (const ResourceUse& use : pass.uses)
+            {
+                AccumulateStage(waitStageMask, StageForUse(use, batch.queueType));
+            }
+        }
+
+        for (const CompiledBarrier& barrier : batch.postBarriers)
+        {
+            AccumulateStage(waitStageMask, NormalizeStageMask(barrier.dstStageMask, defaultStage));
+        }
+
+        batch.waitStageMask = NormalizeStageMask(waitStageMask, defaultStage);
+    }
+}
+
 } // namespace
 
 void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
@@ -519,6 +638,7 @@ void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
     for (QueueBatchInfo& batch : compiledGraph.queueBatches)
     {
         batch.postBarriers.clear();
+        batch.waitStageMask = rhi::RHIPipelineStage::AllCommands;
     }
     compiledGraph.finalBarriers.clear();
 
@@ -528,6 +648,9 @@ void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
         stateTrackers[resourceIndex].state = compiledGraph.resources[resourceIndex].imported
                                                  ? compiledGraph.resources[resourceIndex].initialState
                                                  : rhi::RHIResourceState::Undefined;
+        stateTrackers[resourceIndex].stageMask = compiledGraph.resources[resourceIndex].imported
+                                                     ? rhi::RHIPipelineStage::AllCommands
+                                                     : rhi::RHIPipelineStage::TopOfPipe;
     }
 
     for (uint32_t resourceIndex = 0; resourceIndex < compiledGraph.resources.size(); ++resourceIndex)
@@ -543,15 +666,19 @@ void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
         aliasBarrier.resourceKind = resource.kind;
         aliasBarrier.aliasBeforeResourceIndex = resource.alias.previousResourceIndex;
         aliasBarrier.aliasAfterResourceIndex = resourceIndex;
+        aliasBarrier.srcStageMask = rhi::RHIPipelineStage::AllCommands;
+        aliasBarrier.dstStageMask = rhi::RHIPipelineStage::AllCommands;
         compiledGraph.passes[resource.lifetime.firstUsePass].preBarriers.push_back(aliasBarrier);
     }
 
     for (uint32_t passIndex = 0; passIndex < compiledGraph.passes.size(); ++passIndex)
     {
         CompiledPassInfo& pass = compiledGraph.passes[passIndex];
+        const rhi::RHIQueueType passQueueType = pass.pass->GetQueueType();
         for (const ResourceUse& use : pass.uses)
         {
             ResourceStateTracker& tracker = stateTrackers[use.resourceIndex];
+            const rhi::RHIPipelineStage useStageMask = StageForUse(use, passQueueType);
 
             if (NeedsUAVBarrier(tracker.state, tracker.lastAccessType, use.state, use.accessType))
             {
@@ -559,6 +686,8 @@ void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
                 uavBarrier.type = rhi::RHIBarrierDesc::Type::UAV;
                 uavBarrier.resourceKind = use.resourceKind;
                 uavBarrier.resourceIndex = use.resourceIndex;
+                uavBarrier.srcStageMask = NormalizeStageMask(tracker.stageMask, DefaultStageForQueue(passQueueType));
+                uavBarrier.dstStageMask = useStageMask;
                 pass.preBarriers.push_back(uavBarrier);
             }
 
@@ -570,11 +699,50 @@ void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
                 transitionBarrier.resourceIndex = use.resourceIndex;
                 transitionBarrier.stateBefore = tracker.state;
                 transitionBarrier.stateAfter = use.state;
+                transitionBarrier.srcStageMask =
+                    NormalizeStageMask(tracker.stageMask, StageForState(tracker.state, passQueueType));
+                transitionBarrier.dstStageMask = useStageMask;
                 pass.preBarriers.push_back(transitionBarrier);
             }
 
             tracker.state = use.state;
             tracker.lastAccessType = use.accessType;
+            tracker.stageMask = useStageMask;
+        }
+    }
+
+    for (CompiledPassInfo& pass : compiledGraph.passes)
+    {
+        const rhi::RHIQueueType passQueueType = pass.pass->GetQueueType();
+        for (CompiledBarrier& barrier : pass.preBarriers)
+        {
+            if (barrier.type != rhi::RHIBarrierDesc::Type::Aliasing)
+            {
+                continue;
+            }
+
+            if (barrier.aliasBeforeResourceIndex != kInvalidRenderGraphIndex)
+            {
+                const ResourceStateTracker& beforeTracker = stateTrackers[barrier.aliasBeforeResourceIndex];
+                const RenderGraphResourceInfo& beforeResource = compiledGraph.resources[barrier.aliasBeforeResourceIndex];
+                const rhi::RHIQueueType beforeQueueType =
+                    beforeResource.lifetime.IsValid()
+                        ? compiledGraph.passes[beforeResource.lifetime.lastUsePass].pass->GetQueueType()
+                        : passQueueType;
+
+                barrier.stateBefore = beforeTracker.state;
+                barrier.srcStageMask =
+                    NormalizeStageMask(beforeTracker.stageMask, StageForState(beforeTracker.state, beforeQueueType));
+            }
+
+            if (barrier.aliasAfterResourceIndex != kInvalidRenderGraphIndex)
+            {
+                if (const ResourceUse* firstUse = FindResourceUse(pass, barrier.aliasAfterResourceIndex))
+                {
+                    barrier.stateAfter = firstUse->state;
+                    barrier.dstStageMask = StageForUse(*firstUse, passQueueType);
+                }
+            }
         }
     }
 
@@ -606,9 +774,16 @@ void RenderGraphCompiler::RefreshBarriers(CompiledRenderGraph& compiledGraph)
         barrier.stateBefore = stateTrackers[resourceIndex].state;
         barrier.stateAfter = resource.finalState;
         const uint32_t batchIndex = passToBatch[resource.lifetime.lastUsePass];
+        const rhi::RHIQueueType batchQueueType = compiledGraph.queueBatches[batchIndex].queueType;
+        barrier.srcStageMask =
+            NormalizeStageMask(stateTrackers[resourceIndex].stageMask,
+                               StageForState(stateTrackers[resourceIndex].state, batchQueueType));
+        barrier.dstStageMask = StageForState(resource.finalState, batchQueueType);
         compiledGraph.queueBatches[batchIndex].postBarriers.push_back(barrier);
         compiledGraph.finalBarriers.push_back(barrier);
     }
+
+    ComputeBatchWaitStages(compiledGraph);
 }
 
 CompiledRenderGraph RenderGraphCompiler::Compile(std::span<const RenderGraphPassNode> passNodes,

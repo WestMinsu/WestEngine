@@ -4,6 +4,7 @@
 // =============================================================================
 #include "rhi/dx12/DX12Device.h"
 
+#include "platform/win32/Win32Headers.h"
 #include "rhi/dx12/DX12Buffer.h"
 #include "rhi/dx12/DX12CommandList.h"
 #include "rhi/dx12/DX12Fence.h"
@@ -206,14 +207,14 @@ bool DX12Device::Initialize(const RHIDeviceConfig& config)
     WEST_LOG_INFO(LogCategory::RHI, "Initializing DX12 Device...");
 
     bool debugLayerEnabled = false;
-    if (config.enableDX12GPUBasedValidation && !config.enableValidation)
+    if (config.enableGPUBasedValidation && !config.enableValidation)
     {
         WEST_LOG_WARNING(LogCategory::RHI,
                          "DX12 GPU-Based Validation requested but validation is disabled; ignoring.");
     }
     if (config.enableValidation)
     {
-        debugLayerEnabled = EnableDebugLayer(config.enableDX12GPUBasedValidation);
+        debugLayerEnabled = EnableDebugLayer(config.enableGPUBasedValidation);
     }
 
     if (config.enableGPUCrashDiag)
@@ -423,6 +424,7 @@ void DX12Device::QueryDeviceCaps()
         if (options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_2)
         {
             m_caps.maxBindlessResources = 1000000; // Effectively unbounded
+            m_caps.maxBindlessSamplers = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
         }
     }
 
@@ -507,34 +509,38 @@ void DX12Device::CreateQueues()
 
 void DX12Device::CreateBindlessHeaps()
 {
-    // One BindlessIndex namespace is shared by resources and samplers, so DX12 capacity must respect
-    // the smaller shader-visible sampler heap limit.
-    const uint32_t capacity = (std::min)(
-        (std::min)(kBindlessCapacity, m_caps.maxBindlessResources),
-        static_cast<uint32_t>(D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE));
-    WEST_CHECK(capacity > 0, "DX12 bindless descriptor capacity is zero");
+    m_resourceBindlessCapacity = (std::min)(kBindlessCapacity, m_caps.maxBindlessResources);
+    m_samplerBindlessCapacity =
+        (std::min)(kBindlessCapacity, static_cast<uint32_t>(D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE));
+    WEST_CHECK(m_resourceBindlessCapacity > 0, "DX12 bindless resource descriptor capacity is zero");
+    WEST_CHECK(m_samplerBindlessCapacity > 0, "DX12 bindless sampler descriptor capacity is zero");
 
     D3D12_DESCRIPTOR_HEAP_DESC resourceHeapDesc{};
     resourceHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    resourceHeapDesc.NumDescriptors = capacity;
+    resourceHeapDesc.NumDescriptors = m_resourceBindlessCapacity;
     resourceHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     WEST_HR_CHECK(m_device->CreateDescriptorHeap(&resourceHeapDesc, IID_PPV_ARGS(&m_resourceDescriptorHeap)));
     m_resourceDescriptorHeap->SetName(L"WestEngine Global Resource Descriptor Heap");
 
     D3D12_DESCRIPTOR_HEAP_DESC samplerHeapDesc{};
     samplerHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-    samplerHeapDesc.NumDescriptors = capacity;
+    samplerHeapDesc.NumDescriptors = m_samplerBindlessCapacity;
     samplerHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     WEST_HR_CHECK(m_device->CreateDescriptorHeap(&samplerHeapDesc, IID_PPV_ARGS(&m_samplerDescriptorHeap)));
     m_samplerDescriptorHeap->SetName(L"WestEngine Global Sampler Descriptor Heap");
 
     m_resourceDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_samplerDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
-    m_bindlessPool.Initialize(capacity);
-    m_bindlessPendingFree.assign(capacity, 0);
-    m_caps.maxBindlessResources = capacity;
+    m_resourceBindlessPool.Initialize(m_resourceBindlessCapacity);
+    m_samplerBindlessPool.Initialize(m_samplerBindlessCapacity);
+    m_resourceBindlessPendingFree.assign(m_resourceBindlessCapacity, 0);
+    m_samplerBindlessPendingFree.assign(m_samplerBindlessCapacity, 0);
+    m_caps.maxBindlessResources = m_resourceBindlessCapacity;
+    m_caps.maxBindlessSamplers = m_samplerBindlessCapacity;
 
-    WEST_LOG_INFO(LogCategory::RHI, "DX12 bindless heaps created (capacity={}).", capacity);
+    WEST_LOG_INFO(LogCategory::RHI,
+                  "DX12 bindless heaps created (resourceCapacity={}, samplerCapacity={}).",
+                  m_resourceBindlessCapacity, m_samplerBindlessCapacity);
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE DX12Device::GetResourceDescriptorCPU(BindlessIndex index) const
@@ -624,13 +630,31 @@ void DX12Device::WaitIdle()
         WEST_HR_CHECK(m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
 
         HANDLE event = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        WEST_ASSERT(event != nullptr);
+        WEST_CHECK(event != nullptr, "DX12 WaitIdle failed to create a fence event. Win32 error: {}",
+                   static_cast<uint32_t>(::GetLastError()));
 
-        queue->GetD3DQueue()->Signal(fence.Get(), 1);
+        const HRESULT signalResult = queue->GetD3DQueue()->Signal(fence.Get(), 1);
+        if (FAILED(signalResult))
+        {
+            const HRESULT removedReason = m_device->GetDeviceRemovedReason();
+            WEST_CHECK(false, "DX12 WaitIdle queue signal failed: 0x{:08X}, device removed reason: 0x{:08X}",
+                       static_cast<uint32_t>(signalResult), static_cast<uint32_t>(removedReason));
+        }
 
-        fence->SetEventOnCompletion(1, event);
-        ::WaitForSingleObject(event, INFINITE);
+        const HRESULT eventResult = fence->SetEventOnCompletion(1, event);
+        if (FAILED(eventResult))
+        {
+            const HRESULT removedReason = m_device->GetDeviceRemovedReason();
+            ::CloseHandle(event);
+            WEST_CHECK(false, "DX12 WaitIdle SetEventOnCompletion failed: 0x{:08X}, device removed reason: 0x{:08X}",
+                       static_cast<uint32_t>(eventResult), static_cast<uint32_t>(removedReason));
+        }
+
+        const DWORD waitResult = ::WaitForSingleObject(event, INFINITE);
+        const DWORD waitError = waitResult == WAIT_OBJECT_0 ? 0 : ::GetLastError();
         ::CloseHandle(event);
+        WEST_CHECK(waitResult == WAIT_OBJECT_0, "DX12 WaitIdle wait failed. Win32 error: {}",
+                   static_cast<uint32_t>(waitError));
     };
 
     waitQueueIdle(m_copyQueue.get());
@@ -737,7 +761,9 @@ std::unique_ptr<IRHITexture> DX12Device::CreateTransientTexture(const RHITexture
 
 std::unique_ptr<IRHISampler> DX12Device::CreateSampler(const RHISamplerDesc& desc)
 {
-    return std::make_unique<DX12Sampler>(desc);
+    auto sampler = std::make_unique<DX12Sampler>(desc);
+    sampler->SetOwnerDevice(this);
+    return sampler;
 }
 
 std::unique_ptr<IRHIPipeline> DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc)
@@ -763,7 +789,7 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHIBuffer* buffer, RHIBindle
     auto* dx12Buffer = static_cast<DX12Buffer*>(buffer);
     std::lock_guard lock(m_bindlessMutex);
 
-    BindlessIndex index = m_bindlessPool.Allocate();
+    BindlessIndex index = m_resourceBindlessPool.Allocate();
     if (index == kInvalidBindlessIndex)
     {
         WEST_LOG_ERROR(LogCategory::RHI, "DX12 bindless heap exhausted while registering buffer");
@@ -832,7 +858,7 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHITexture* texture)
     auto* dx12Texture = static_cast<DX12Texture*>(texture);
     std::lock_guard lock(m_bindlessMutex);
 
-    BindlessIndex index = m_bindlessPool.Allocate();
+    BindlessIndex index = m_resourceBindlessPool.Allocate();
     if (index == kInvalidBindlessIndex)
     {
         WEST_LOG_ERROR(LogCategory::RHI, "DX12 bindless heap exhausted while registering texture");
@@ -938,7 +964,7 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHISampler* sampler)
     auto* dx12Sampler = static_cast<DX12Sampler*>(sampler);
     std::lock_guard lock(m_bindlessMutex);
 
-    BindlessIndex index = m_bindlessPool.Allocate();
+    BindlessIndex index = m_samplerBindlessPool.Allocate();
     if (index == kInvalidBindlessIndex)
     {
         WEST_LOG_ERROR(LogCategory::RHI, "DX12 bindless heap exhausted while registering sampler");
@@ -974,37 +1000,132 @@ BindlessIndex DX12Device::RegisterBindlessResource(IRHISampler* sampler)
     return index;
 }
 
-void DX12Device::UnregisterBindlessResource(BindlessIndex index)
+void DX12Device::UnregisterBindlessResource(IRHIBuffer* buffer)
+{
+    if (!buffer)
+    {
+        return;
+    }
+
+    auto* dx12Buffer = static_cast<DX12Buffer*>(buffer);
+    const BindlessIndex index = dx12Buffer->GetBindlessIndex();
+    if (index == kInvalidBindlessIndex)
+    {
+        return;
+    }
+
+    dx12Buffer->SetBindlessIndex(kInvalidBindlessIndex);
+    UnregisterResourceBindlessIndex(index, "buffer");
+}
+
+void DX12Device::UnregisterBindlessResource(IRHITexture* texture)
+{
+    if (!texture)
+    {
+        return;
+    }
+
+    auto* dx12Texture = static_cast<DX12Texture*>(texture);
+    const BindlessIndex index = dx12Texture->GetBindlessIndex();
+    if (index == kInvalidBindlessIndex)
+    {
+        return;
+    }
+
+    dx12Texture->SetBindlessIndex(kInvalidBindlessIndex);
+    UnregisterResourceBindlessIndex(index, "texture");
+}
+
+void DX12Device::UnregisterBindlessResource(IRHISampler* sampler)
+{
+    if (!sampler)
+    {
+        return;
+    }
+
+    auto* dx12Sampler = static_cast<DX12Sampler*>(sampler);
+    const BindlessIndex index = dx12Sampler->GetBindlessIndex();
+    if (index == kInvalidBindlessIndex)
+    {
+        return;
+    }
+
+    dx12Sampler->SetBindlessIndex(kInvalidBindlessIndex);
+    UnregisterSamplerBindlessIndex(index);
+}
+
+void DX12Device::UnregisterResourceBindlessIndex(BindlessIndex index, const char* label)
 {
     const uint64_t fenceValue = GetCurrentFrameFenceValue();
 
     {
         std::lock_guard lock(m_bindlessMutex);
-        if (!m_bindlessPool.IsAllocated(index) || index >= m_bindlessPendingFree.size())
+        if (!m_resourceBindlessPool.IsAllocated(index) || index >= m_resourceBindlessPendingFree.size())
         {
-            WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless unregister ignored for invalid index {}", index);
+            WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless {} unregister ignored for invalid index {}",
+                             label, index);
             return;
         }
 
-        if (m_bindlessPendingFree[index] != 0)
+        if (m_resourceBindlessPendingFree[index] != 0)
         {
-            WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless unregister ignored for pending index {}", index);
+            WEST_LOG_WARNING(LogCategory::RHI, "DX12 bindless {} unregister ignored for pending index {}",
+                             label, index);
             return;
         }
 
-        m_bindlessPendingFree[index] = 1;
+        m_resourceBindlessPendingFree[index] = 1;
+    }
+
+    EnqueueDeferredDeletion([this, index, label]()
+    {
+        std::lock_guard lock(m_bindlessMutex);
+        if (!m_resourceBindlessPool.Free(index))
+        {
+            WEST_LOG_WARNING(LogCategory::RHI,
+                             "DX12 deferred bindless {} free ignored for invalid index {}", label, index);
+        }
+        if (index < m_resourceBindlessPendingFree.size())
+        {
+            m_resourceBindlessPendingFree[index] = 0;
+        }
+    }, fenceValue);
+}
+
+void DX12Device::UnregisterSamplerBindlessIndex(BindlessIndex index)
+{
+    const uint64_t fenceValue = GetCurrentFrameFenceValue();
+
+    {
+        std::lock_guard lock(m_bindlessMutex);
+        if (!m_samplerBindlessPool.IsAllocated(index) || index >= m_samplerBindlessPendingFree.size())
+        {
+            WEST_LOG_WARNING(LogCategory::RHI,
+                             "DX12 bindless sampler unregister ignored for invalid index {}", index);
+            return;
+        }
+
+        if (m_samplerBindlessPendingFree[index] != 0)
+        {
+            WEST_LOG_WARNING(LogCategory::RHI,
+                             "DX12 bindless sampler unregister ignored for pending index {}", index);
+            return;
+        }
+
+        m_samplerBindlessPendingFree[index] = 1;
     }
 
     EnqueueDeferredDeletion([this, index]()
     {
         std::lock_guard lock(m_bindlessMutex);
-        if (!m_bindlessPool.Free(index))
+        if (!m_samplerBindlessPool.Free(index))
         {
-            WEST_LOG_WARNING(LogCategory::RHI, "DX12 deferred bindless free ignored for invalid index {}", index);
+            WEST_LOG_WARNING(LogCategory::RHI,
+                             "DX12 deferred bindless sampler free ignored for invalid index {}", index);
         }
-        if (index < m_bindlessPendingFree.size())
+        if (index < m_samplerBindlessPendingFree.size())
         {
-            m_bindlessPendingFree[index] = 0;
+            m_samplerBindlessPendingFree[index] = 0;
         }
     }, fenceValue);
 }

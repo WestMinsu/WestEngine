@@ -54,6 +54,20 @@ uint32_t ToDXGIFormat(RHIFormat format)
         return 45;  // DXGI_FORMAT_D24_UNORM_S8_UINT
     case RHIFormat::D32_FLOAT_S8_UINT:
         return 20;  // DXGI_FORMAT_D32_FLOAT_S8X24_UINT
+    case RHIFormat::BC1_UNORM:
+        return 71;  // DXGI_FORMAT_BC1_UNORM
+    case RHIFormat::BC1_UNORM_SRGB:
+        return 72;  // DXGI_FORMAT_BC1_UNORM_SRGB
+    case RHIFormat::BC3_UNORM:
+        return 77;  // DXGI_FORMAT_BC3_UNORM
+    case RHIFormat::BC3_UNORM_SRGB:
+        return 78;  // DXGI_FORMAT_BC3_UNORM_SRGB
+    case RHIFormat::BC5_UNORM:
+        return 83;  // DXGI_FORMAT_BC5_UNORM
+    case RHIFormat::BC7_UNORM:
+        return 98;  // DXGI_FORMAT_BC7_UNORM
+    case RHIFormat::BC7_UNORM_SRGB:
+        return 99;  // DXGI_FORMAT_BC7_UNORM_SRGB
     default:
         return 0;   // DXGI_FORMAT_UNKNOWN
     }
@@ -106,6 +120,20 @@ uint32_t ToVkFormat(RHIFormat format)
         return 129; // VK_FORMAT_D24_UNORM_S8_UINT
     case RHIFormat::D32_FLOAT_S8_UINT:
         return 130; // VK_FORMAT_D32_SFLOAT_S8_UINT
+    case RHIFormat::BC1_UNORM:
+        return 133; // VK_FORMAT_BC1_RGBA_UNORM_BLOCK
+    case RHIFormat::BC1_UNORM_SRGB:
+        return 134; // VK_FORMAT_BC1_RGBA_SRGB_BLOCK
+    case RHIFormat::BC3_UNORM:
+        return 137; // VK_FORMAT_BC3_UNORM_BLOCK
+    case RHIFormat::BC3_UNORM_SRGB:
+        return 138; // VK_FORMAT_BC3_SRGB_BLOCK
+    case RHIFormat::BC5_UNORM:
+        return 141; // VK_FORMAT_BC5_UNORM_BLOCK
+    case RHIFormat::BC7_UNORM:
+        return 145; // VK_FORMAT_BC7_UNORM_BLOCK
+    case RHIFormat::BC7_UNORM_SRGB:
+        return 146; // VK_FORMAT_BC7_SRGB_BLOCK
     default:
         return 0;   // VK_FORMAT_UNDEFINED
     }

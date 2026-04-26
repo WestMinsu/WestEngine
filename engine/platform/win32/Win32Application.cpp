@@ -791,12 +791,27 @@ struct UploadedTextureResult
     uint64_t stagingBytes = 0;
 };
 
+[[nodiscard]] uint32_t GetTextureUploadRowCount(rhi::RHIFormat format, uint32_t height)
+{
+    const uint32_t blockHeight = rhi::GetFormatBlockHeight(format);
+    return (height + blockHeight - 1u) / blockHeight;
+}
+
+[[nodiscard]] uint32_t GetTextureUploadRowLengthTexels(rhi::RHIFormat format, uint32_t rowPitchBytes)
+{
+    const uint32_t bytesPerBlock = rhi::GetFormatByteSize(format);
+    const uint32_t blockWidth = rhi::GetFormatBlockWidth(format);
+    WEST_CHECK(bytesPerBlock > 0, "Unsupported texture upload format");
+    WEST_CHECK((rowPitchBytes % bytesPerBlock) == 0,
+               "Texture upload row pitch must be block-size aligned");
+    return (rowPitchBytes / bytesPerBlock) * blockWidth;
+}
+
 [[nodiscard]] UploadedTextureResult UploadTextureAsset(rhi::IRHIDevice& device, rhi::IRHICommandList& uploadCommandList,
                                                        const scene::TextureAssetData& asset,
                                                        std::vector<std::unique_ptr<rhi::IRHIBuffer>>& stagingBuffers)
 {
-    const uint32_t bytesPerPixel = rhi::GetFormatByteSize(asset.format);
-    WEST_CHECK(bytesPerPixel > 0, "Unsupported texture upload format");
+    WEST_CHECK(rhi::GetFormatByteSize(asset.format) > 0, "Unsupported texture upload format");
 
     std::vector<StagedTextureSubresource> stagedSubresources;
     stagedSubresources.reserve(asset.subresources.size());
@@ -811,7 +826,8 @@ struct UploadedTextureResult
         staged.alignedRowPitchBytes = AlignUp(subresource.rowPitchBytes, 256u);
         staged.stagingOffsetBytes = AlignUp(totalStagingBytes, 512ull);
         staged.stagingBytes =
-            static_cast<uint64_t>(staged.alignedRowPitchBytes) * subresource.height * subresource.depth;
+            static_cast<uint64_t>(staged.alignedRowPitchBytes) *
+            GetTextureUploadRowCount(asset.format, subresource.height) * subresource.depth;
         totalStagingBytes = staged.stagingOffsetBytes + staged.stagingBytes;
         stagedSubresources.push_back(staged);
     }
@@ -835,7 +851,8 @@ struct UploadedTextureResult
     {
         WEST_ASSERT(staged.source != nullptr);
         const scene::TextureSubresourceData& source = *staged.source;
-        for (uint32_t row = 0; row < source.height; ++row)
+        const uint32_t rowCount = GetTextureUploadRowCount(asset.format, source.height);
+        for (uint32_t row = 0; row < rowCount; ++row)
         {
             const uint8_t* sourceRow =
                 asset.bytes.data() + source.sourceOffsetBytes + (static_cast<size_t>(row) * source.rowPitchBytes);
@@ -875,7 +892,7 @@ struct UploadedTextureResult
 
         rhi::RHICopyRegion copyRegion{};
         copyRegion.bufferOffset = staged.stagingOffsetBytes;
-        copyRegion.bufferRowLength = staged.alignedRowPitchBytes / bytesPerPixel;
+        copyRegion.bufferRowLength = GetTextureUploadRowLengthTexels(asset.format, staged.alignedRowPitchBytes);
         copyRegion.bufferImageHeight = source.height;
         copyRegion.texWidth = source.width;
         copyRegion.texHeight = source.height;
@@ -993,6 +1010,10 @@ bool Win32Application::Initialize()
         {
             m_enableTextureBatchUpload = false;
         }
+        else if (arg == "--texture-native-resolution")
+        {
+            m_sceneTextureMaxDimension = 0;
+        }
         else if (arg == "--disable-gpu-driven-scene")
         {
             m_enableGPUDrivenScene = false;
@@ -1013,6 +1034,27 @@ bool Win32Application::Initialize()
             else
             {
                 WEST_LOG_WARNING(LogCategory::Core, "Ignoring unknown scene preset argument: {}", arg);
+            }
+        }
+
+        static constexpr std::string_view kTextureMaxDimensionPrefix = "--texture-max-dimension=";
+        if (arg.starts_with(kTextureMaxDimensionPrefix))
+        {
+            const std::string_view dimensionText = arg.substr(kTextureMaxDimensionPrefix.size());
+            uint32 parsedMaxDimension = 0;
+            const char* begin = dimensionText.data();
+            const char* end = begin + dimensionText.size();
+            const auto [ptr, ec] = std::from_chars(begin, end, parsedMaxDimension);
+            if (ec == std::errc{} && ptr == end)
+            {
+                m_sceneTextureMaxDimension = parsedMaxDimension;
+                WEST_LOG_INFO(LogCategory::Core,
+                              "Scene texture max dimension set to {}.",
+                              m_sceneTextureMaxDimension);
+            }
+            else
+            {
+                WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid texture max dimension argument: {}", arg);
             }
         }
 
@@ -1055,12 +1097,13 @@ bool Win32Application::Initialize()
     Logger::Log(LogLevel::Info, LogCategory::Core,
                 std::format("Launch config: build={}, backend={}, validation={}, dx12GBV={}, gpuCrashDiag={}, "
                             "frameLimit={}, scenePreset={}, sceneCache={}, sceneMerge={}, sceneBatchUpload={}, "
-                            "textureCache={}, textureBatchUpload={}, gpuDrivenScene={}",
+                            "textureCache={}, textureBatchUpload={}, textureMaxDimension={}, gpuDrivenScene={}",
                             BuildConfigName(), BackendName(m_backend), OnOff(m_enableValidation),
                             OnOff(m_enableDX12GPUBasedValidation), OnOff(m_enableGPUCrashDiag), m_maxFrameCount,
                             ScenePresetName(m_useCanonicalGltfScene), OnOff(m_enableSceneCache),
                             OnOff(m_enableSceneMerge), OnOff(m_enableSceneBatchUpload), OnOff(m_enableTextureCache),
-                            OnOff(m_enableTextureBatchUpload), OnOff(m_enableGPUDrivenScene)));
+                            OnOff(m_enableTextureBatchUpload), m_sceneTextureMaxDimension,
+                            OnOff(m_enableGPUDrivenScene)));
 
     InitializeRHI();
 
@@ -1077,7 +1120,7 @@ void Win32Application::InitializeRHI()
 
     rhi::RHIDeviceConfig config{};
     config.enableValidation = m_enableValidation;
-    config.enableDX12GPUBasedValidation = m_enableDX12GPUBasedValidation;
+    config.enableGPUBasedValidation = m_enableDX12GPUBasedValidation;
     config.enableGPUCrashDiag = m_enableGPUCrashDiag;
     config.preferredGPUIndex = UINT32_MAX;
     config.windowHandle = m_window->GetNativeHandle();
@@ -1092,7 +1135,7 @@ void Win32Application::InitializeRHI()
     {
         Logger::Log(LogLevel::Info, LogCategory::RHI,
                     std::format("RHI Backend: {} (validation={}, dx12GBV={}, gpuCrashDiag={})", BackendName(m_backend),
-                                OnOff(config.enableValidation), OnOff(config.enableDX12GPUBasedValidation),
+                                OnOff(config.enableValidation), OnOff(config.enableGPUBasedValidation),
                                 OnOff(config.enableGPUCrashDiag)));
     }
     else
@@ -1725,7 +1768,7 @@ void Win32Application::InitializeScene()
     {
         const scene::TextureAsset* asset = nullptr;
         scene::TextureAssetData textureData;
-        scene::ImageLoadStats loadStats;
+        scene::TextureAssetLoadStats loadStats;
         uint64_t stagingBytes = 0;
         bool usedFallback = false;
 
@@ -1746,7 +1789,9 @@ void Win32Application::InitializeScene()
         uint32_t cacheWrites = 0;
         uint32_t fallbackCount = 0;
         double cacheReadMs = 0.0;
+        double sourceImageCacheReadMs = 0.0;
         double decodeMs = 0.0;
+        double mipBuildMs = 0.0;
         double cacheWriteMs = 0.0;
     };
 
@@ -1761,19 +1806,25 @@ void Win32Application::InitializeScene()
         LoadedSceneTexture loadedTexture{};
         loadedTexture.asset = &textureAsset;
 
-        scene::ImageLoadOptions imageLoadOptions{};
-        imageLoadOptions.enableCache = m_enableTextureCache;
-        if (const auto loadedImage = scene::LoadImageRGBA8(textureAsset.sourcePath, imageLoadOptions);
-            loadedImage.has_value())
+        scene::TextureAssetLoadOptions textureLoadOptions{};
+        textureLoadOptions.enableCache = m_enableTextureCache;
+        textureLoadOptions.generateMipChain = true;
+        textureLoadOptions.maxDimension = m_sceneTextureMaxDimension;
+        if (auto loadedAsset = scene::LoadTexture2DAssetRGBA8WithStats(textureAsset.sourcePath,
+                                                                       textureAsset.debugName,
+                                                                       true,
+                                                                       textureLoadOptions);
+            loadedAsset.has_value())
         {
-            loadedTexture.textureData =
-                scene::BuildTexture2DAssetRGBA8(textureAsset.debugName, std::move(loadedImage->image), true);
-            loadedTexture.loadStats = loadedImage->stats;
+            loadedTexture.textureData = std::move(loadedAsset->texture);
+            loadedTexture.loadStats = loadedAsset->stats;
             textureLoadSummary.cacheHits += loadedTexture.loadStats.usedCache ? 1u : 0u;
             textureLoadSummary.cacheMisses += loadedTexture.loadStats.usedCache ? 0u : 1u;
             textureLoadSummary.cacheWrites += loadedTexture.loadStats.cacheWritten ? 1u : 0u;
             textureLoadSummary.cacheReadMs += loadedTexture.loadStats.cacheReadMs;
+            textureLoadSummary.sourceImageCacheReadMs += loadedTexture.loadStats.sourceImageCacheReadMs;
             textureLoadSummary.decodeMs += loadedTexture.loadStats.decodeMs;
+            textureLoadSummary.mipBuildMs += loadedTexture.loadStats.mipBuildMs;
             textureLoadSummary.cacheWriteMs += loadedTexture.loadStats.cacheWriteMs;
         }
         else
@@ -1790,8 +1841,8 @@ void Win32Application::InitializeScene()
 
         loadedTexture.stagedSubresources.reserve(loadedTexture.textureData.subresources.size());
         uint64_t perTextureStagingBytes = 0;
-        const uint32_t bytesPerPixel = rhi::GetFormatByteSize(loadedTexture.textureData.format);
-        WEST_CHECK(bytesPerPixel > 0, "Unsupported scene texture upload format");
+        WEST_CHECK(rhi::GetFormatByteSize(loadedTexture.textureData.format) > 0,
+                   "Unsupported scene texture upload format");
         WEST_CHECK(!loadedTexture.textureData.subresources.empty(), "Scene texture must have uploadable subresources");
         for (uint32_t subresourceIndex = 0;
              subresourceIndex < static_cast<uint32_t>(loadedTexture.textureData.subresources.size());
@@ -1802,7 +1853,8 @@ void Win32Application::InitializeScene()
             stagedSubresource.subresourceIndex = subresourceIndex;
             stagedSubresource.alignedRowPitchBytes = AlignUp(subresource.rowPitchBytes, 256u);
             stagedSubresource.stagingBytes =
-                static_cast<uint64_t>(stagedSubresource.alignedRowPitchBytes) * subresource.height * subresource.depth;
+                static_cast<uint64_t>(stagedSubresource.alignedRowPitchBytes) *
+                GetTextureUploadRowCount(loadedTexture.textureData.format, subresource.height) * subresource.depth;
 
             uint64_t& stagingCursor = m_enableTextureBatchUpload ? totalTextureStagingBytes : perTextureStagingBytes;
             stagedSubresource.stagingOffsetBytes = AlignUp(stagingCursor, 512ull);
@@ -1853,7 +1905,9 @@ void Win32Application::InitializeScene()
             {
                 const scene::TextureSubresourceData& subresource =
                     loadedTexture.textureData.subresources[stagedSubresource.subresourceIndex];
-                for (uint32_t row = 0; row < subresource.height; ++row)
+                const uint32_t rowCount = GetTextureUploadRowCount(loadedTexture.textureData.format,
+                                                                   subresource.height);
+                for (uint32_t row = 0; row < rowCount; ++row)
                 {
                     const uint8_t* sourceRow = loadedTexture.textureData.bytes.data() +
                                                subresource.sourceOffsetBytes +
@@ -1891,8 +1945,7 @@ void Win32Application::InitializeScene()
             textureToCopyBarrier.stateAfter = rhi::RHIResourceState::CopyDest;
             uploadCommandList->ResourceBarrier(textureToCopyBarrier);
 
-            const uint32_t bytesPerPixel = rhi::GetFormatByteSize(textureData.format);
-            WEST_CHECK(bytesPerPixel > 0, "Unsupported scene texture upload format");
+            WEST_CHECK(rhi::GetFormatByteSize(textureData.format) > 0, "Unsupported scene texture upload format");
             for (const LoadedSceneTexture::StagedSubresource& stagedSubresource : loadedTexture.stagedSubresources)
             {
                 const scene::TextureSubresourceData& subresource =
@@ -1900,7 +1953,8 @@ void Win32Application::InitializeScene()
 
                 rhi::RHICopyRegion copyRegion{};
                 copyRegion.bufferOffset = stagedSubresource.stagingOffsetBytes;
-                copyRegion.bufferRowLength = stagedSubresource.alignedRowPitchBytes / bytesPerPixel;
+                copyRegion.bufferRowLength =
+                    GetTextureUploadRowLengthTexels(textureData.format, stagedSubresource.alignedRowPitchBytes);
                 copyRegion.bufferImageHeight = subresource.height;
                 copyRegion.texWidth = subresource.width;
                 copyRegion.texHeight = subresource.height;
@@ -1947,7 +2001,9 @@ void Win32Application::InitializeScene()
             {
                 const scene::TextureSubresourceData& subresource =
                     loadedTexture.textureData.subresources[stagedSubresource.subresourceIndex];
-                for (uint32_t row = 0; row < subresource.height; ++row)
+                const uint32_t rowCount = GetTextureUploadRowCount(loadedTexture.textureData.format,
+                                                                   subresource.height);
+                for (uint32_t row = 0; row < rowCount; ++row)
                 {
                     const uint8_t* sourceRow = loadedTexture.textureData.bytes.data() +
                                                subresource.sourceOffsetBytes +
@@ -1982,8 +2038,7 @@ void Win32Application::InitializeScene()
             textureToCopyBarrier.stateAfter = rhi::RHIResourceState::CopyDest;
             uploadCommandList->ResourceBarrier(textureToCopyBarrier);
 
-            const uint32_t bytesPerPixel = rhi::GetFormatByteSize(textureData.format);
-            WEST_CHECK(bytesPerPixel > 0, "Unsupported scene texture upload format");
+            WEST_CHECK(rhi::GetFormatByteSize(textureData.format) > 0, "Unsupported scene texture upload format");
             for (const LoadedSceneTexture::StagedSubresource& stagedSubresource : loadedTexture.stagedSubresources)
             {
                 const scene::TextureSubresourceData& subresource =
@@ -1991,7 +2046,8 @@ void Win32Application::InitializeScene()
 
                 rhi::RHICopyRegion copyRegion{};
                 copyRegion.bufferOffset = stagedSubresource.stagingOffsetBytes;
-                copyRegion.bufferRowLength = stagedSubresource.alignedRowPitchBytes / bytesPerPixel;
+                copyRegion.bufferRowLength =
+                    GetTextureUploadRowLengthTexels(textureData.format, stagedSubresource.alignedRowPitchBytes);
                 copyRegion.bufferImageHeight = subresource.height;
                 copyRegion.texWidth = subresource.width;
                 copyRegion.texHeight = subresource.height;
@@ -2260,13 +2316,16 @@ void Win32Application::InitializeScene()
             loadStats.sourceIndexCount, loadStats.optimizedIndexCount, loadStats.totalLoadMs, loadStats.cacheReadMs,
             loadStats.importMs, loadStats.optimizeMs, loadStats.cacheWriteMs));
     Logger::Log(LogLevel::Info, LogCategory::Scene,
-                std::format("{} texture stats: cache={}, batchUpload={}, hits={}, misses={}, writes={}, fallbacks={}, "
-                            "load {:.2f} ms (cacheRead {:.2f}, decode {:.2f}, cacheWrite {:.2f}), upload {:.2f} ms, "
-                            "staging {:.2f} MiB.",
+                std::format("{} texture stats: cache={}, batchUpload={}, maxDimension={}, hits={}, misses={}, writes={}, "
+                            "fallbacks={}, "
+                            "load {:.2f} ms (assetCacheRead {:.2f}, sourceCacheRead {:.2f}, decode {:.2f}, "
+                            "mipBuild {:.2f}, assetCacheWrite {:.2f}), upload {:.2f} ms, staging {:.2f} MiB.",
                             sceneName, OnOff(m_enableTextureCache), OnOff(m_enableTextureBatchUpload),
+                            m_sceneTextureMaxDimension,
                             textureLoadSummary.cacheHits, textureLoadSummary.cacheMisses,
                             textureLoadSummary.cacheWrites, textureLoadSummary.fallbackCount, textureLoadMs,
-                            textureLoadSummary.cacheReadMs, textureLoadSummary.decodeMs,
+                            textureLoadSummary.cacheReadMs, textureLoadSummary.sourceImageCacheReadMs,
+                            textureLoadSummary.decodeMs, textureLoadSummary.mipBuildMs,
                             textureLoadSummary.cacheWriteMs, textureUploadMs,
                             static_cast<double>(totalTextureStagingBytes) / (1024.0 * 1024.0)));
     Logger::Log(
@@ -2297,8 +2356,9 @@ void Win32Application::InitializeImageBasedLighting(rhi::IRHICommandList& upload
     std::optional<scene::TextureAssetData> prefilteredAsset = scene::LoadKtx2CubemapAsset(prefilteredPath);
     std::optional<scene::TextureAssetData> irradianceAsset = scene::LoadKtx2CubemapAsset(irradiancePath);
 
-    scene::ImageLoadOptions brdfLutOptions{};
+    scene::TextureAssetLoadOptions brdfLutOptions{};
     brdfLutOptions.enableCache = m_enableTextureCache;
+    brdfLutOptions.generateMipChain = false;
     std::optional<scene::TextureAssetData> brdfLutAsset =
         scene::LoadTexture2DAssetRGBA8(brdfLutPath, false, brdfLutOptions);
 
@@ -2325,10 +2385,10 @@ void Win32Application::InitializeImageBasedLighting(rhi::IRHICommandList& upload
 
     Logger::Log(LogLevel::Info, LogCategory::Scene,
                 std::format("IBL texture stats: prefiltered={} ({} mips), irradiance={} ({} mips), brdfLut={}, "
-                            "load {:.2f} ms, upload {:.2f} ms, staging {:.2f} MiB.",
+                            "brdfLutMips={}, load {:.2f} ms, upload {:.2f} ms, staging {:.2f} MiB.",
                             prefilteredPath.filename().string(), prefilteredAsset->mipLevels,
                             irradiancePath.filename().string(), irradianceAsset->mipLevels,
-                            brdfLutPath.filename().string(), loadMs, uploadMs,
+                            brdfLutPath.filename().string(), brdfLutAsset->mipLevels, loadMs, uploadMs,
                             static_cast<double>(totalStagingBytes) / (1024.0 * 1024.0)));
 }
 
@@ -2737,7 +2797,12 @@ void Win32Application::BuildTelemetryOverlay()
         ImGui::TextColored(warningColor, "GPU frame time: pending async timestamp readback");
     }
 
-    ImGui::Text("GPU-driven draws: %u visible / %u candidates", m_lastGPUDrivenVisibleCount, m_sceneDrawCount);
+    const float cullPercent = m_sceneDrawCount > 0
+                                  ? 100.0f - (static_cast<float>(m_lastGPUDrivenVisibleCount) /
+                                              static_cast<float>(m_sceneDrawCount) * 100.0f)
+                                  : 0.0f;
+    ImGui::Text("GPU-driven draws: %u visible / %u candidates (%.1f%% culled)",
+                m_lastGPUDrivenVisibleCount, m_sceneDrawCount, cullPercent);
     ImGui::Text("Tracy: %s", kTracyEnabled ? "compiled in" : "off");
 
     const std::span<const editor::GpuPassTelemetry> gpuPassTimings = m_frameTelemetry->GetGpuPassTimings();
@@ -2859,7 +2924,12 @@ void Win32Application::BuildImGuiControlPanel()
         ImGui::Text("Backend: %s", BackendName(m_backend));
         ImGui::Text("Scene: %s", ScenePresetName(m_useCanonicalGltfScene));
         ImGui::Text("GPU-driven: %s", OnOff(m_gpuDrivenAvailable));
-        ImGui::Text("Visible Draws: %u / %u", m_lastGPUDrivenVisibleCount, m_sceneDrawCount);
+        const float cullPercent = m_sceneDrawCount > 0
+                                      ? 100.0f - (static_cast<float>(m_lastGPUDrivenVisibleCount) /
+                                                  static_cast<float>(m_sceneDrawCount) * 100.0f)
+                                      : 0.0f;
+        ImGui::Text("Visible Draws: %u / %u (%.1f%% culled)",
+                    m_lastGPUDrivenVisibleCount, m_sceneDrawCount, cullPercent);
         ImGui::Separator();
 
         if (ImGui::Checkbox("Capture GUI Input", &m_imguiCaptureInput))
@@ -2975,6 +3045,19 @@ void Win32Application::BuildImGuiControlPanel()
                 };
                 m_freeLookYawRadians = -std::numbers::pi_v<float> * 0.5f;
                 m_freeLookPitchRadians = -1.45f;
+                inspectorChanged = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Culling Proof View"))
+            {
+                m_freeLookPosition = {
+                    sceneCenter[0] + (sceneRadius * 0.85f),
+                    sceneCenter[1] + (sceneRadius * 0.16f),
+                    sceneCenter[2] + (sceneRadius * 1.05f),
+                };
+                m_freeLookYawRadians = -std::numbers::pi_v<float> * 0.82f;
+                m_freeLookPitchRadians = -0.06f;
+                m_runtimeCameraFovDegrees = 38.0f;
                 inspectorChanged = true;
             }
         }
@@ -3885,68 +3968,68 @@ void Win32Application::ShutdownRHI()
     {
         if (frameConstantsBuffer && frameConstantsBuffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
         {
-            m_rhiDevice->UnregisterBindlessResource(frameConstantsBuffer->GetBindlessIndex());
+            m_rhiDevice->UnregisterBindlessResource(frameConstantsBuffer.get());
         }
     }
     if (m_materialBuffer && m_materialBuffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_materialBuffer->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_materialBuffer.get());
     }
     if (m_sceneDrawBuffer && m_sceneDrawBuffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_sceneDrawBuffer->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_sceneDrawBuffer.get());
     }
     for (const auto& indirectArgsBuffer : m_gpuDrivenIndirectArgsBuffers)
     {
         if (indirectArgsBuffer && indirectArgsBuffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
         {
-            m_rhiDevice->UnregisterBindlessResource(indirectArgsBuffer->GetBindlessIndex());
+            m_rhiDevice->UnregisterBindlessResource(indirectArgsBuffer.get());
         }
     }
     for (const auto& indirectCountBuffer : m_gpuDrivenIndirectCountBuffers)
     {
         if (indirectCountBuffer && indirectCountBuffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
         {
-            m_rhiDevice->UnregisterBindlessResource(indirectCountBuffer->GetBindlessIndex());
+            m_rhiDevice->UnregisterBindlessResource(indirectCountBuffer.get());
         }
     }
     if (m_checkerSampler && m_checkerSampler->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_checkerSampler->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_checkerSampler.get());
     }
     if (m_materialStableSampler && m_materialStableSampler->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_materialStableSampler->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_materialStableSampler.get());
     }
     if (m_shadowSampler && m_shadowSampler->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_shadowSampler->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_shadowSampler.get());
     }
     if (m_iblSampler && m_iblSampler->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_iblSampler->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_iblSampler.get());
     }
     if (m_checkerTexture && m_checkerTexture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_checkerTexture->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_checkerTexture.get());
     }
     if (m_iblPrefilteredTexture && m_iblPrefilteredTexture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_iblPrefilteredTexture->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_iblPrefilteredTexture.get());
     }
     if (m_iblIrradianceTexture && m_iblIrradianceTexture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_iblIrradianceTexture->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_iblIrradianceTexture.get());
     }
     if (m_iblBrdfLutTexture && m_iblBrdfLutTexture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
     {
-        m_rhiDevice->UnregisterBindlessResource(m_iblBrdfLutTexture->GetBindlessIndex());
+        m_rhiDevice->UnregisterBindlessResource(m_iblBrdfLutTexture.get());
     }
     for (const SceneTextureResource& textureResource : m_sceneTextureResources)
     {
         if (textureResource.texture && textureResource.texture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
         {
-            m_rhiDevice->UnregisterBindlessResource(textureResource.texture->GetBindlessIndex());
+            m_rhiDevice->UnregisterBindlessResource(textureResource.texture.get());
         }
     }
 

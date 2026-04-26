@@ -22,6 +22,8 @@ struct CompiledBarrier
     uint32_t aliasAfterResourceIndex = kInvalidRenderGraphIndex;
     rhi::RHIResourceState stateBefore = rhi::RHIResourceState::Undefined;
     rhi::RHIResourceState stateAfter = rhi::RHIResourceState::Common;
+    rhi::RHIPipelineStage srcStageMask = rhi::RHIPipelineStage::Auto;
+    rhi::RHIPipelineStage dstStageMask = rhi::RHIPipelineStage::Auto;
 };
 
 struct CompiledPassInfo
@@ -37,6 +39,7 @@ struct QueueBatchInfo
     rhi::RHIQueueType queueType = rhi::RHIQueueType::Graphics;
     uint32_t beginPass = 0;
     uint32_t endPass = 0;
+    rhi::RHIPipelineStage waitStageMask = rhi::RHIPipelineStage::AllCommands;
     std::vector<uint32_t> waitBatchIndices;
     std::vector<CompiledBarrier> postBarriers;
 };

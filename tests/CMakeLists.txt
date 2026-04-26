@@ -67,6 +67,7 @@ west_add_shader_test(PSOCacheHash shader/test_pso_cache_hash.cpp)
 west_add_render_test(RenderGraphCompile render/test_render_graph_compile.cpp)
 west_add_scene_test(CanonicalGltfScene scene/test_canonical_gltf_scene.cpp)
 west_add_scene_test(CanonicalMaskedGltfScene scene/test_canonical_masked_gltf_scene.cpp)
+west_add_scene_test(TextureAssetCache scene/test_texture_asset_cache.cpp)
 
 add_test(
     NAME ShaderMetadataExtractor

@@ -136,6 +136,7 @@ private:
     bool m_enableSceneBatchUpload = true;
     bool m_enableTextureCache = true;
     bool m_enableTextureBatchUpload = true;
+    uint32 m_sceneTextureMaxDimension = 1024;
     bool m_enableGPUDrivenScene = true;
     bool m_useCanonicalGltfScene = false;
     std::string m_baseWindowTitle = "WestEngine";

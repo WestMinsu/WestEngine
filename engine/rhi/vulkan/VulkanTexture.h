@@ -20,6 +20,10 @@ class VulkanTexture final : public IRHITexture
 public:
     VulkanTexture() = default;
     ~VulkanTexture() override;
+    VulkanTexture(const VulkanTexture&) = delete;
+    VulkanTexture& operator=(const VulkanTexture&) = delete;
+    VulkanTexture(VulkanTexture&& other) noexcept;
+    VulkanTexture& operator=(VulkanTexture&&) = delete;
 
     void Initialize(VulkanDevice* device, const RHITextureDesc& desc);
     void InitializeAliased(VulkanDevice* device, const RHITextureDesc& desc,

@@ -18,6 +18,10 @@ class DX12Pipeline final : public IRHIPipeline
 public:
     DX12Pipeline() = default;
     ~DX12Pipeline() override;
+    DX12Pipeline(const DX12Pipeline&) = delete;
+    DX12Pipeline& operator=(const DX12Pipeline&) = delete;
+    DX12Pipeline(DX12Pipeline&&) = delete;
+    DX12Pipeline& operator=(DX12Pipeline&&) = delete;
 
     /// Create a graphics PSO with the given desc.
     void Initialize(ID3D12Device* device, ID3D12RootSignature* rootSignature, const RHIGraphicsPipelineDesc& desc);

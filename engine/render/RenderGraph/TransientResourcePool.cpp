@@ -28,7 +28,7 @@ void TransientResourcePool::Prepare(rhi::IRHIDevice& device, const CompiledRende
             std::unique_ptr<rhi::IRHITexture> retiredTexture = std::move(m_textures[resourceIndex]);
             if (retiredTexture && retiredTexture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
             {
-                device.UnregisterBindlessResource(retiredTexture->GetBindlessIndex());
+                device.UnregisterBindlessResource(retiredTexture.get());
             }
 
             if (retiredTexture)
@@ -48,7 +48,7 @@ void TransientResourcePool::Prepare(rhi::IRHIDevice& device, const CompiledRende
             std::unique_ptr<rhi::IRHIBuffer> retiredBuffer = std::move(m_buffers[resourceIndex]);
             if (retiredBuffer && retiredBuffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
             {
-                device.UnregisterBindlessResource(retiredBuffer->GetBindlessIndex());
+                device.UnregisterBindlessResource(retiredBuffer.get());
             }
 
             if (retiredBuffer)
@@ -127,7 +127,7 @@ void TransientResourcePool::Reset(rhi::IRHIDevice* device)
         {
             if (texture && texture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
             {
-                device->UnregisterBindlessResource(texture->GetBindlessIndex());
+                device->UnregisterBindlessResource(texture.get());
             }
             if (texture)
             {
@@ -143,7 +143,7 @@ void TransientResourcePool::Reset(rhi::IRHIDevice* device)
         {
             if (buffer && buffer->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
             {
-                device->UnregisterBindlessResource(buffer->GetBindlessIndex());
+                device->UnregisterBindlessResource(buffer.get());
             }
             if (buffer)
             {

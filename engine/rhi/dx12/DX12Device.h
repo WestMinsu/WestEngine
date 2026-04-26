@@ -55,7 +55,9 @@ public:
         RHIBindlessBufferView view = RHIBindlessBufferView::ReadOnly) override;
     BindlessIndex RegisterBindlessResource(IRHITexture* texture) override;
     BindlessIndex RegisterBindlessResource(IRHISampler* sampler) override;
-    void UnregisterBindlessResource(BindlessIndex index) override;
+    void UnregisterBindlessResource(IRHIBuffer* buffer) override;
+    void UnregisterBindlessResource(IRHITexture* texture) override;
+    void UnregisterBindlessResource(IRHISampler* sampler) override;
 
     void WaitIdle() override;
     RHIBackend GetBackend() const override
@@ -132,6 +134,8 @@ private:
 
     D3D12_CPU_DESCRIPTOR_HANDLE GetResourceDescriptorCPU(BindlessIndex index) const;
     D3D12_CPU_DESCRIPTOR_HANDLE GetSamplerDescriptorCPU(BindlessIndex index) const;
+    void UnregisterResourceBindlessIndex(BindlessIndex index, const char* label);
+    void UnregisterSamplerBindlessIndex(BindlessIndex index);
 
     ComPtr<IDXGIFactory7> m_factory;
     ComPtr<IDXGIAdapter4> m_adapter;
@@ -151,8 +155,12 @@ private:
     ComPtr<ID3D12DescriptorHeap> m_samplerDescriptorHeap;
     uint32_t m_resourceDescriptorSize = 0;
     uint32_t m_samplerDescriptorSize = 0;
-    BindlessPool m_bindlessPool;
-    std::vector<uint8> m_bindlessPendingFree;
+    uint32_t m_resourceBindlessCapacity = 0;
+    uint32_t m_samplerBindlessCapacity = 0;
+    BindlessPool m_resourceBindlessPool;
+    BindlessPool m_samplerBindlessPool;
+    std::vector<uint8> m_resourceBindlessPendingFree;
+    std::vector<uint8> m_samplerBindlessPendingFree;
     std::mutex m_bindlessMutex;
 
     RHIDeviceCaps m_caps{};

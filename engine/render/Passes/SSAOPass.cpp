@@ -69,10 +69,12 @@ void SSAOPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_ambientOcclusion.IsValid());
     WEST_ASSERT(m_frameBuffer.IsValid());
 
-    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_sceneDepth, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_normalRoughness, rhi::RHIResourceState::ShaderResource);
-    builder.WriteTexture(m_ambientOcclusion, rhi::RHIResourceState::RenderTarget);
+    constexpr rhi::RHIPipelineStage pixelStage = rhi::RHIPipelineStage::PixelShader;
+    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_sceneDepth, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_normalRoughness, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.WriteTexture(m_ambientOcclusion, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
 }
 
 void SSAOPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)

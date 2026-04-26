@@ -12,6 +12,11 @@ namespace west::rhi
 
 VulkanBuffer::~VulkanBuffer()
 {
+    if (m_device && m_bindlessIndex != kInvalidBindlessIndex)
+    {
+        m_device->UnregisterBindlessResource(this);
+    }
+
     if (m_mappedPtr && m_vmaAllocator)
     {
         if (m_desc.memoryType == RHIMemoryType::Upload || m_desc.memoryType == RHIMemoryType::GPUShared)

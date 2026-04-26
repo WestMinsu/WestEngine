@@ -17,6 +17,10 @@ class DX12Semaphore final : public IRHISemaphore
 public:
     DX12Semaphore() = default;
     ~DX12Semaphore() override = default;
+    DX12Semaphore(const DX12Semaphore&) = delete;
+    DX12Semaphore& operator=(const DX12Semaphore&) = delete;
+    DX12Semaphore(DX12Semaphore&&) = delete;
+    DX12Semaphore& operator=(DX12Semaphore&&) = delete;
 };
 
 } // namespace west::rhi

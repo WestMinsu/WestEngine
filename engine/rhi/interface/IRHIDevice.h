@@ -61,7 +61,9 @@ public:
         RHIBindlessBufferView view = RHIBindlessBufferView::ReadOnly) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHITexture* texture) = 0;
     virtual BindlessIndex RegisterBindlessResource(IRHISampler* sampler) = 0;
-    virtual void UnregisterBindlessResource(BindlessIndex index) = 0;
+    virtual void UnregisterBindlessResource(IRHIBuffer* buffer) = 0;
+    virtual void UnregisterBindlessResource(IRHITexture* texture) = 0;
+    virtual void UnregisterBindlessResource(IRHISampler* sampler) = 0;
 
     // ── Utility ───────────────────────────────────────────────────────
     virtual void WaitIdle() = 0;

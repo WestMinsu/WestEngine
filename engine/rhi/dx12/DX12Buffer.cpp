@@ -12,6 +12,11 @@ namespace west::rhi
 
 DX12Buffer::~DX12Buffer()
 {
+    if (m_device && m_bindlessIndex != kInvalidBindlessIndex)
+    {
+        m_device->UnregisterBindlessResource(this);
+    }
+
     if (m_mappedPtr && m_resource)
     {
         m_resource->Unmap(0, nullptr);

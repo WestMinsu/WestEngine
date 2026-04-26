@@ -17,6 +17,10 @@ class VulkanSampler final : public IRHISampler
 public:
     VulkanSampler() = default;
     ~VulkanSampler() override;
+    VulkanSampler(const VulkanSampler&) = delete;
+    VulkanSampler& operator=(const VulkanSampler&) = delete;
+    VulkanSampler(VulkanSampler&&) = delete;
+    VulkanSampler& operator=(VulkanSampler&&) = delete;
 
     void Initialize(VulkanDevice* device, const RHISamplerDesc& desc);
 

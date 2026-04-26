@@ -49,19 +49,29 @@ public:
     {
     }
 
-    void ReadTexture(TextureHandle handle, rhi::RHIResourceState state = rhi::RHIResourceState::ShaderResource);
-    void WriteTexture(TextureHandle handle, rhi::RHIResourceState state = rhi::RHIResourceState::RenderTarget);
+    void ReadTexture(TextureHandle handle,
+                     rhi::RHIResourceState state = rhi::RHIResourceState::ShaderResource,
+                     rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto);
+    void WriteTexture(TextureHandle handle,
+                      rhi::RHIResourceState state = rhi::RHIResourceState::RenderTarget,
+                      rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto);
     void ReadWriteTexture(TextureHandle handle,
-                          rhi::RHIResourceState state = rhi::RHIResourceState::UnorderedAccess);
+                          rhi::RHIResourceState state = rhi::RHIResourceState::UnorderedAccess,
+                          rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto);
 
-    void ReadBuffer(BufferHandle handle, rhi::RHIResourceState state = rhi::RHIResourceState::ShaderResource);
-    void WriteBuffer(BufferHandle handle, rhi::RHIResourceState state = rhi::RHIResourceState::CopyDest);
+    void ReadBuffer(BufferHandle handle,
+                    rhi::RHIResourceState state = rhi::RHIResourceState::ShaderResource,
+                    rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto);
+    void WriteBuffer(BufferHandle handle,
+                     rhi::RHIResourceState state = rhi::RHIResourceState::CopyDest,
+                     rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto);
     void ReadWriteBuffer(BufferHandle handle,
-                         rhi::RHIResourceState state = rhi::RHIResourceState::UnorderedAccess);
+                         rhi::RHIResourceState state = rhi::RHIResourceState::UnorderedAccess,
+                         rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto);
 
 private:
     void AddUse(ResourceKind resourceKind, uint32_t resourceIndex, rhi::RHIResourceState state,
-                ResourceAccessType accessType);
+                ResourceAccessType accessType, rhi::RHIPipelineStage stageMask);
 
     std::vector<ResourceUse>& m_uses;
 };

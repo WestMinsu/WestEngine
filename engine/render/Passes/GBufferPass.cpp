@@ -116,21 +116,28 @@ void GBufferPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_materialBuffer.IsValid());
     WEST_ASSERT(m_drawBuffer.IsValid());
 
-    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadBuffer(m_materialBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadBuffer(m_drawBuffer, rhi::RHIResourceState::ShaderResource);
+    constexpr rhi::RHIPipelineStage graphicsStage = rhi::RHIPipelineStage::AllGraphics;
+    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource, graphicsStage);
+    builder.ReadBuffer(m_materialBuffer, rhi::RHIResourceState::ShaderResource, graphicsStage);
+    builder.ReadBuffer(m_drawBuffer, rhi::RHIResourceState::ShaderResource, graphicsStage);
     if (m_sharedVertexBuffer.IsValid())
     {
-        builder.ReadBuffer(m_sharedVertexBuffer, rhi::RHIResourceState::VertexBuffer);
+        builder.ReadBuffer(m_sharedVertexBuffer, rhi::RHIResourceState::VertexBuffer,
+                           rhi::RHIPipelineStage::VertexInput);
     }
     if (m_sharedIndexBuffer.IsValid())
     {
-        builder.ReadBuffer(m_sharedIndexBuffer, rhi::RHIResourceState::IndexBuffer);
+        builder.ReadBuffer(m_sharedIndexBuffer, rhi::RHIResourceState::IndexBuffer,
+                           rhi::RHIPipelineStage::VertexInput);
     }
-    builder.WriteTexture(m_worldPosition, rhi::RHIResourceState::RenderTarget);
-    builder.WriteTexture(m_normalRoughness, rhi::RHIResourceState::RenderTarget);
-    builder.WriteTexture(m_albedoMetallic, rhi::RHIResourceState::RenderTarget);
-    builder.WriteTexture(m_sceneDepth, rhi::RHIResourceState::DepthStencilWrite);
+    builder.WriteTexture(m_worldPosition, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
+    builder.WriteTexture(m_normalRoughness, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
+    builder.WriteTexture(m_albedoMetallic, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
+    builder.WriteTexture(m_sceneDepth, rhi::RHIResourceState::DepthStencilWrite,
+                         rhi::RHIPipelineStage::DepthStencil);
 
     if (m_useIndirect)
     {
@@ -138,8 +145,10 @@ void GBufferPass::Setup(RenderGraphBuilder& builder)
         WEST_ASSERT(m_indirectCount.IsValid());
         WEST_ASSERT(m_sharedVertexBuffer.IsValid());
         WEST_ASSERT(m_sharedIndexBuffer.IsValid());
-        builder.ReadBuffer(m_indirectArgs, rhi::RHIResourceState::IndirectArgument);
-        builder.ReadBuffer(m_indirectCount, rhi::RHIResourceState::IndirectArgument);
+        builder.ReadBuffer(m_indirectArgs, rhi::RHIResourceState::IndirectArgument,
+                           rhi::RHIPipelineStage::DrawIndirect);
+        builder.ReadBuffer(m_indirectCount, rhi::RHIResourceState::IndirectArgument,
+                           rhi::RHIPipelineStage::DrawIndirect);
     }
     else
     {
@@ -147,11 +156,13 @@ void GBufferPass::Setup(RenderGraphBuilder& builder)
         {
             if (draw.vertexBufferHandle.IsValid())
             {
-                builder.ReadBuffer(draw.vertexBufferHandle, rhi::RHIResourceState::VertexBuffer);
+                builder.ReadBuffer(draw.vertexBufferHandle, rhi::RHIResourceState::VertexBuffer,
+                                   rhi::RHIPipelineStage::VertexInput);
             }
             if (draw.indexBufferHandle.IsValid())
             {
-                builder.ReadBuffer(draw.indexBufferHandle, rhi::RHIResourceState::IndexBuffer);
+                builder.ReadBuffer(draw.indexBufferHandle, rhi::RHIResourceState::IndexBuffer,
+                                   rhi::RHIPipelineStage::VertexInput);
             }
         }
     }

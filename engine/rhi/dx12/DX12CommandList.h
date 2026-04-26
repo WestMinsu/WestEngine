@@ -16,6 +16,10 @@ class DX12CommandList final : public IRHICommandList
 public:
     DX12CommandList() = default;
     ~DX12CommandList() override = default;
+    DX12CommandList(const DX12CommandList&) = delete;
+    DX12CommandList& operator=(const DX12CommandList&) = delete;
+    DX12CommandList(DX12CommandList&&) = delete;
+    DX12CommandList& operator=(DX12CommandList&&) = delete;
 
     /// Initialize command allocator + command list.
     void Initialize(ID3D12Device* device, RHIQueueType type, ID3D12DescriptorHeap* resourceHeap,
@@ -68,11 +72,13 @@ public:
 private:
     ComPtr<ID3D12CommandAllocator> m_allocator;
     ComPtr<ID3D12GraphicsCommandList6> m_cmdList;
+    ComPtr<ID3D12GraphicsCommandList7> m_cmdList7;
     ComPtr<ID3D12CommandSignature> m_drawIndexedIndirectSignature;
     ID3D12DescriptorHeap* m_resourceDescriptorHeap = nullptr;
     ID3D12DescriptorHeap* m_samplerDescriptorHeap = nullptr;
     RHIPipelineType m_currentPipelineType = RHIPipelineType::Graphics;
     RHIQueueType m_queueType = RHIQueueType::Graphics;
+    bool m_enhancedBarriersEnabled = false;
 };
 
 } // namespace west::rhi

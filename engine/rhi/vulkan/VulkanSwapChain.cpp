@@ -21,7 +21,11 @@ VulkanSwapChain::~VulkanSwapChain()
 {
     if (m_device)
     {
-        vkDeviceWaitIdle(m_device->GetVkDevice());
+        const VkResult result = vkDeviceWaitIdle(m_device->GetVkDevice());
+        if (result != VK_SUCCESS)
+        {
+            WEST_LOG_WARNING(LogCategory::RHI, "Vulkan swapchain destructor wait failed: {}", static_cast<int>(result));
+        }
     }
 
     DestroySwapChainResources();
@@ -53,8 +57,9 @@ void VulkanSwapChain::Initialize(VulkanDevice* device, const RHISwapChainDesc& d
 
     // Verify present support
     VkBool32 presentSupport = VK_FALSE;
-    vkGetPhysicalDeviceSurfaceSupportKHR(device->GetVkPhysicalDevice(), device->GetGraphicsQueueFamily(), m_surface,
-                                         &presentSupport);
+    WEST_VK_CHECK(vkGetPhysicalDeviceSurfaceSupportKHR(device->GetVkPhysicalDevice(),
+                                                       device->GetGraphicsQueueFamily(), m_surface,
+                                                       &presentSupport));
     WEST_CHECK(presentSupport == VK_TRUE, "Graphics queue does not support presentation");
 
     CreateSwapChain(desc.width, desc.height);
@@ -79,14 +84,15 @@ void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height, VkSwapcha
     VkPhysicalDevice physDevice = m_device->GetVkPhysicalDevice();
 
     // Query surface capabilities
-    VkSurfaceCapabilitiesKHR capabilities;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physDevice, m_surface, &capabilities);
+    VkSurfaceCapabilitiesKHR capabilities{};
+    WEST_VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physDevice, m_surface, &capabilities));
 
     // Query supported formats
-    uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, m_surface, &formatCount, nullptr);
+    uint32_t formatCount = 0;
+    WEST_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, m_surface, &formatCount, nullptr));
+    WEST_CHECK(formatCount > 0, "Vulkan surface returned no supported formats");
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, m_surface, &formatCount, formats.data());
+    WEST_VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, m_surface, &formatCount, formats.data()));
 
     // Prefer BGRA8 SRGB, fallback to first available
     m_vkFormat = formats[0].format;
@@ -125,10 +131,12 @@ void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height, VkSwapcha
     m_height = extent.height;
 
     // Query present modes
-    uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, m_surface, &presentModeCount, nullptr);
+    uint32_t presentModeCount = 0;
+    WEST_VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, m_surface, &presentModeCount, nullptr));
+    WEST_CHECK(presentModeCount > 0, "Vulkan surface returned no supported present modes");
     std::vector<VkPresentModeKHR> presentModes(presentModeCount);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, m_surface, &presentModeCount, presentModes.data());
+    WEST_VK_CHECK(vkGetPhysicalDeviceSurfacePresentModesKHR(physDevice, m_surface, &presentModeCount,
+                                                            presentModes.data()));
 
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR; // Guaranteed available (vsync)
     if (!m_vsync)
@@ -166,9 +174,10 @@ void VulkanSwapChain::CreateSwapChain(uint32_t width, uint32_t height, VkSwapcha
     WEST_VK_CHECK(vkCreateSwapchainKHR(m_device->GetVkDevice(), &swapChainInfo, nullptr, &m_swapChain));
 
     // Get actual image count (may differ from requested)
-    vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &m_bufferCount, nullptr);
+    WEST_VK_CHECK(vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &m_bufferCount, nullptr));
+    WEST_CHECK(m_bufferCount > 0, "Vulkan swapchain returned no images");
     m_images.resize(m_bufferCount);
-    vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &m_bufferCount, m_images.data());
+    WEST_VK_CHECK(vkGetSwapchainImagesKHR(m_device->GetVkDevice(), m_swapChain, &m_bufferCount, m_images.data()));
     m_currentIndex = 0;
 }
 
@@ -228,11 +237,13 @@ void VulkanSwapChain::DestroySwapChainResources()
 
 uint32_t VulkanSwapChain::AcquireNextImage(IRHISemaphore* acquireSemaphore)
 {
+    WEST_CHECK(acquireSemaphore != nullptr,
+               "VulkanSwapChain::AcquireNextImage requires a non-null acquire semaphore");
+
     VkSemaphore vkSemaphore = VK_NULL_HANDLE;
-    if (acquireSemaphore)
-    {
-        vkSemaphore = static_cast<VulkanSemaphore*>(acquireSemaphore)->GetVkSemaphore();
-    }
+    vkSemaphore = static_cast<VulkanSemaphore*>(acquireSemaphore)->GetVkSemaphore();
+    WEST_CHECK(vkSemaphore != VK_NULL_HANDLE,
+               "VulkanSwapChain::AcquireNextImage received an invalid acquire semaphore");
 
     VkResult result = vkAcquireNextImageKHR(m_device->GetVkDevice(), m_swapChain, UINT64_MAX, vkSemaphore,
                                             VK_NULL_HANDLE, &m_currentIndex);
@@ -258,16 +269,19 @@ bool VulkanSwapChain::Present(IRHISemaphore* presentSemaphore)
     presentInfo.pSwapchains = &m_swapChain;
     presentInfo.pImageIndices = &m_currentIndex;
 
+    VkSemaphore waitSemaphore = VK_NULL_HANDLE;
     if (presentSemaphore)
     {
-        VkSemaphore vkSem = static_cast<VulkanSemaphore*>(presentSemaphore)->GetVkSemaphore();
+        waitSemaphore = static_cast<VulkanSemaphore*>(presentSemaphore)->GetVkSemaphore();
+        WEST_CHECK(waitSemaphore != VK_NULL_HANDLE,
+                   "VulkanSwapChain::Present received an invalid present semaphore");
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &vkSem;
+        presentInfo.pWaitSemaphores = &waitSemaphore;
     }
 
     auto* vkQueue = static_cast<VulkanQueue*>(m_device->GetQueue(RHIQueueType::Graphics));
 
-    VkResult result = vkQueuePresentKHR(vkQueue->GetVkQueue(), &presentInfo);
+    VkResult result = vkQueue->Present(presentInfo);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
@@ -292,7 +306,7 @@ void VulkanSwapChain::Resize(uint32_t width, uint32_t height)
     if (width == 0 || height == 0)
         return;
 
-    vkDeviceWaitIdle(m_device->GetVkDevice());
+    WEST_VK_CHECK(vkDeviceWaitIdle(m_device->GetVkDevice()));
 
     VkSwapchainKHR oldSwapChain = m_swapChain;
 

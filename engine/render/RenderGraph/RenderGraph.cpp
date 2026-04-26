@@ -30,6 +30,8 @@ namespace
     resolvedBarrier.type = barrier.type;
     resolvedBarrier.stateBefore = barrier.stateBefore;
     resolvedBarrier.stateAfter = barrier.stateAfter;
+    resolvedBarrier.srcStageMask = barrier.srcStageMask;
+    resolvedBarrier.dstStageMask = barrier.dstStageMask;
 
     if (barrier.type == rhi::RHIBarrierDesc::Type::Transition)
     {
@@ -93,38 +95,44 @@ void RecordResolvedBarriers(rhi::IRHICommandList& commandList, std::span<const C
 
 } // namespace
 
-void RenderGraphBuilder::ReadTexture(TextureHandle handle, rhi::RHIResourceState state)
+void RenderGraphBuilder::ReadTexture(TextureHandle handle, rhi::RHIResourceState state,
+                                     rhi::RHIPipelineStage stageMask)
 {
-    AddUse(ResourceKind::Texture, handle.index, state, ResourceAccessType::Read);
+    AddUse(ResourceKind::Texture, handle.index, state, ResourceAccessType::Read, stageMask);
 }
 
-void RenderGraphBuilder::WriteTexture(TextureHandle handle, rhi::RHIResourceState state)
+void RenderGraphBuilder::WriteTexture(TextureHandle handle, rhi::RHIResourceState state,
+                                      rhi::RHIPipelineStage stageMask)
 {
-    AddUse(ResourceKind::Texture, handle.index, state, ResourceAccessType::Write);
+    AddUse(ResourceKind::Texture, handle.index, state, ResourceAccessType::Write, stageMask);
 }
 
-void RenderGraphBuilder::ReadWriteTexture(TextureHandle handle, rhi::RHIResourceState state)
+void RenderGraphBuilder::ReadWriteTexture(TextureHandle handle, rhi::RHIResourceState state,
+                                          rhi::RHIPipelineStage stageMask)
 {
-    AddUse(ResourceKind::Texture, handle.index, state, ResourceAccessType::ReadWrite);
+    AddUse(ResourceKind::Texture, handle.index, state, ResourceAccessType::ReadWrite, stageMask);
 }
 
-void RenderGraphBuilder::ReadBuffer(BufferHandle handle, rhi::RHIResourceState state)
+void RenderGraphBuilder::ReadBuffer(BufferHandle handle, rhi::RHIResourceState state,
+                                    rhi::RHIPipelineStage stageMask)
 {
-    AddUse(ResourceKind::Buffer, handle.index, state, ResourceAccessType::Read);
+    AddUse(ResourceKind::Buffer, handle.index, state, ResourceAccessType::Read, stageMask);
 }
 
-void RenderGraphBuilder::WriteBuffer(BufferHandle handle, rhi::RHIResourceState state)
+void RenderGraphBuilder::WriteBuffer(BufferHandle handle, rhi::RHIResourceState state,
+                                     rhi::RHIPipelineStage stageMask)
 {
-    AddUse(ResourceKind::Buffer, handle.index, state, ResourceAccessType::Write);
+    AddUse(ResourceKind::Buffer, handle.index, state, ResourceAccessType::Write, stageMask);
 }
 
-void RenderGraphBuilder::ReadWriteBuffer(BufferHandle handle, rhi::RHIResourceState state)
+void RenderGraphBuilder::ReadWriteBuffer(BufferHandle handle, rhi::RHIResourceState state,
+                                         rhi::RHIPipelineStage stageMask)
 {
-    AddUse(ResourceKind::Buffer, handle.index, state, ResourceAccessType::ReadWrite);
+    AddUse(ResourceKind::Buffer, handle.index, state, ResourceAccessType::ReadWrite, stageMask);
 }
 
 void RenderGraphBuilder::AddUse(ResourceKind resourceKind, uint32_t resourceIndex, rhi::RHIResourceState state,
-                                ResourceAccessType accessType)
+                                ResourceAccessType accessType, rhi::RHIPipelineStage stageMask)
 {
     WEST_ASSERT(resourceIndex != kInvalidRenderGraphIndex);
     m_uses.push_back(ResourceUse{
@@ -132,6 +140,7 @@ void RenderGraphBuilder::AddUse(ResourceKind resourceKind, uint32_t resourceInde
         .resourceIndex = resourceIndex,
         .state = state,
         .accessType = accessType,
+        .stageMask = stageMask,
     });
 }
 
@@ -475,7 +484,7 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
         timelineWaits.reserve(batch.waitBatchIndices.size());
         for (uint32_t producerBatchIndex : batch.waitBatchIndices)
         {
-            timelineWaits.push_back({&desc.timelineFence, batchSignalValues[producerBatchIndex]});
+            timelineWaits.push_back({&desc.timelineFence, batchSignalValues[producerBatchIndex], batch.waitStageMask});
         }
 
         std::vector<rhi::RHITimelineSignalDesc> timelineSignals = {{&desc.timelineFence, signalValue}};
@@ -493,21 +502,20 @@ uint64_t RenderGraph::Execute(const ExecuteDesc& desc)
 
         desc.device.GetQueue(batch.queueType)->Submit(submitInfo);
 
+        const uint64_t commandListAvailableFenceValue =
+            batchSignalValues.empty() ? signalValue : batchSignalValues.back();
+
         if (desc.commandListPool)
         {
-            desc.commandListPool->Release(pooledLease, signalValue);
+            desc.commandListPool->Release(pooledLease, commandListAvailableFenceValue);
         }
         else
         {
-            auto retainedCommandList =
-                std::shared_ptr<rhi::IRHICommandList>(ownedCommandList.release(), [](rhi::IRHICommandList* ptr)
-                {
-                    delete ptr;
-                });
-            desc.device.EnqueueDeferredDeletion([retainedCommandList]() mutable
+            rhi::IRHICommandList* retainedCommandList = ownedCommandList.release();
+            desc.device.EnqueueDeferredDeletion([retainedCommandList]()
             {
-                retainedCommandList.reset();
-            }, signalValue);
+                delete retainedCommandList;
+            }, commandListAvailableFenceValue);
         }
     }
 

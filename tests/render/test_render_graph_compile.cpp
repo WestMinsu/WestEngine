@@ -214,7 +214,15 @@ public:
         return rhi::kInvalidBindlessIndex;
     }
 
-    void UnregisterBindlessResource(rhi::BindlessIndex) override
+    void UnregisterBindlessResource(rhi::IRHIBuffer*) override
+    {
+    }
+
+    void UnregisterBindlessResource(rhi::IRHITexture*) override
+    {
+    }
+
+    void UnregisterBindlessResource(rhi::IRHISampler*) override
     {
     }
 
@@ -332,7 +340,9 @@ public:
         rhi::RHIBindlessBufferView = rhi::RHIBindlessBufferView::ReadOnly) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
-    void UnregisterBindlessResource(rhi::BindlessIndex) override {}
+    void UnregisterBindlessResource(rhi::IRHIBuffer*) override {}
+    void UnregisterBindlessResource(rhi::IRHITexture*) override {}
+    void UnregisterBindlessResource(rhi::IRHISampler*) override {}
     void WaitIdle() override {}
     rhi::RHIBackend GetBackend() const override { return rhi::RHIBackend::DX12; }
     const char* GetDeviceName() const override { return "PoolFakeDevice"; }
@@ -456,6 +466,12 @@ public:
     {
         ++submitCount;
         lastSubmitCommandListCount = static_cast<uint32_t>(info.commandLists.size());
+        lastTimelineWaitStages.clear();
+        lastTimelineWaitStages.reserve(info.timelineWaits.size());
+        for (const rhi::RHITimelineWaitDesc& wait : info.timelineWaits)
+        {
+            lastTimelineWaitStages.push_back(wait.stageMask);
+        }
     }
 
     rhi::RHIQueueType GetType() const override
@@ -465,6 +481,7 @@ public:
 
     uint32_t submitCount = 0;
     uint32_t lastSubmitCommandListCount = 0;
+    std::vector<rhi::RHIPipelineStage> lastTimelineWaitStages;
 
 private:
     rhi::RHIQueueType m_type = rhi::RHIQueueType::Graphics;
@@ -513,7 +530,9 @@ public:
         rhi::RHIBindlessBufferView = rhi::RHIBindlessBufferView::ReadOnly) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHITexture*) override { return rhi::kInvalidBindlessIndex; }
     rhi::BindlessIndex RegisterBindlessResource(rhi::IRHISampler*) override { return rhi::kInvalidBindlessIndex; }
-    void UnregisterBindlessResource(rhi::BindlessIndex) override {}
+    void UnregisterBindlessResource(rhi::IRHIBuffer*) override {}
+    void UnregisterBindlessResource(rhi::IRHITexture*) override {}
+    void UnregisterBindlessResource(rhi::IRHISampler*) override {}
     void WaitIdle() override {}
     rhi::RHIBackend GetBackend() const override { return rhi::RHIBackend::DX12; }
     const char* GetDeviceName() const override { return "ExecuteFakeDevice"; }
@@ -562,6 +581,29 @@ public:
     return false;
 }
 
+[[nodiscard]] bool HasTransitionWithStages(const std::vector<render::CompiledBarrier>& barriers,
+                                           uint32_t resourceIndex,
+                                           rhi::RHIResourceState before,
+                                           rhi::RHIResourceState after,
+                                           rhi::RHIPipelineStage srcStage,
+                                           rhi::RHIPipelineStage dstStage)
+{
+    for (const render::CompiledBarrier& barrier : barriers)
+    {
+        if (barrier.type == rhi::RHIBarrierDesc::Type::Transition &&
+            barrier.resourceIndex == resourceIndex &&
+            barrier.stateBefore == before &&
+            barrier.stateAfter == after &&
+            barrier.srcStageMask == srcStage &&
+            barrier.dstStageMask == dstStage)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 [[nodiscard]] bool HasAliasingBarrier(const std::vector<render::CompiledBarrier>& barriers, uint32_t beforeResource,
                                       uint32_t afterResource)
 {
@@ -570,6 +612,29 @@ public:
         if (barrier.type == rhi::RHIBarrierDesc::Type::Aliasing &&
             barrier.aliasBeforeResourceIndex == beforeResource &&
             barrier.aliasAfterResourceIndex == afterResource)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+[[nodiscard]] bool HasAliasingBarrierWithStates(const std::vector<render::CompiledBarrier>& barriers,
+                                                uint32_t beforeResource, uint32_t afterResource,
+                                                rhi::RHIResourceState beforeState, rhi::RHIResourceState afterState,
+                                                rhi::RHIPipelineStage beforeStage,
+                                                rhi::RHIPipelineStage afterStage)
+{
+    for (const render::CompiledBarrier& barrier : barriers)
+    {
+        if (barrier.type == rhi::RHIBarrierDesc::Type::Aliasing &&
+            barrier.aliasBeforeResourceIndex == beforeResource &&
+            barrier.aliasAfterResourceIndex == afterResource &&
+            barrier.stateBefore == beforeState &&
+            barrier.stateAfter == afterState &&
+            barrier.srcStageMask == beforeStage &&
+            barrier.dstStageMask == afterStage)
         {
             return true;
         }
@@ -755,6 +820,13 @@ void TestAliasingPlan()
     assert(resources[textureA.index].alias.slot == resources[textureB.index].alias.slot);
     assert(resources[textureB.index].alias.previousResourceIndex == textureA.index);
     assert(HasAliasingBarrier(compiledGraph.passes[2].preBarriers, textureA.index, textureB.index));
+    assert(HasAliasingBarrierWithStates(compiledGraph.passes[2].preBarriers,
+                                        textureA.index,
+                                        textureB.index,
+                                        rhi::RHIResourceState::ShaderResource,
+                                        rhi::RHIResourceState::RenderTarget,
+                                        rhi::RHIPipelineStage::AllGraphics,
+                                        rhi::RHIPipelineStage::ColorAttachmentOutput));
 }
 
 void TestAliasingRejectsUsageMismatch()
@@ -853,6 +925,55 @@ void TestCrossQueueWaits()
     assert(compiledGraph.queueBatches.size() == 2);
     assert(compiledGraph.queueBatches[1].waitBatchIndices.size() == 1);
     assert(compiledGraph.queueBatches[1].waitBatchIndices[0] == 0);
+}
+
+void TestStageAwareBarriersAndWaitStages()
+{
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sink(sinkDesc);
+    const render::TextureHandle sinkHandle =
+        graph.ImportTexture(&sink, rhi::RHIResourceState::RenderTarget,
+                            rhi::RHIResourceState::RenderTarget, "Sink");
+
+    rhi::RHIBufferDesc bufferDesc{};
+    bufferDesc.sizeBytes = 4096;
+    bufferDesc.usage = rhi::RHIBufferUsage::StorageBuffer | rhi::RHIBufferUsage::CopyDest;
+    bufferDesc.debugName = "StageAwareBuffer";
+
+    const render::BufferHandle bufferHandle = graph.CreateTransientBuffer(bufferDesc);
+
+    TestPass copyPass("CopyPass", rhi::RHIQueueType::Copy, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteBuffer(bufferHandle, rhi::RHIResourceState::CopyDest, rhi::RHIPipelineStage::Copy);
+    });
+
+    TestPass graphicsPass("GraphicsPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.ReadBuffer(bufferHandle, rhi::RHIResourceState::ShaderResource,
+                           rhi::RHIPipelineStage::PixelShader);
+        builder.WriteTexture(sinkHandle, rhi::RHIResourceState::RenderTarget,
+                             rhi::RHIPipelineStage::ColorAttachmentOutput);
+    });
+
+    graph.AddPass(copyPass);
+    graph.AddPass(graphicsPass);
+    graph.Compile();
+
+    const render::CompiledRenderGraph& compiledGraph = graph.GetCompiledGraph();
+    assert(compiledGraph.queueBatches.size() == 2);
+    assert(compiledGraph.queueBatches[1].waitBatchIndices.size() == 1);
+    assert(compiledGraph.queueBatches[1].waitBatchIndices[0] == 0);
+    assert(rhi::HasFlag(compiledGraph.queueBatches[1].waitStageMask, rhi::RHIPipelineStage::PixelShader));
+    assert(!rhi::HasFlag(compiledGraph.queueBatches[1].waitStageMask, rhi::RHIPipelineStage::AllCommands));
+    assert(HasTransitionWithStages(compiledGraph.passes[1].preBarriers, bufferHandle.index,
+                                   rhi::RHIResourceState::CopyDest, rhi::RHIResourceState::ShaderResource,
+                                   rhi::RHIPipelineStage::Copy, rhi::RHIPipelineStage::PixelShader));
 }
 
 void TestFinalBarrierStaysOnLastUsingBatch()
@@ -1104,6 +1225,60 @@ void TestExecuteBatchesBarrierSubmission()
     assert(device.graphicsQueue.lastSubmitCommandListCount == 1);
 }
 
+void TestExecuteUsesConsumingBatchWaitStage()
+{
+    ExecuteFakeDevice device;
+    FakeFence fence;
+    render::TransientResourcePool pool;
+    render::RenderGraph graph;
+
+    rhi::RHITextureDesc sinkDesc{};
+    sinkDesc.width = 64;
+    sinkDesc.height = 64;
+    sinkDesc.format = rhi::RHIFormat::BGRA8_UNORM;
+    sinkDesc.usage = rhi::RHITextureUsage::RenderTarget;
+    FakeTexture sink(sinkDesc);
+    const render::TextureHandle sinkHandle =
+        graph.ImportTexture(&sink, rhi::RHIResourceState::RenderTarget,
+                            rhi::RHIResourceState::RenderTarget, "Sink");
+
+    rhi::RHIBufferDesc bufferDesc{};
+    bufferDesc.sizeBytes = 1024;
+    bufferDesc.usage = rhi::RHIBufferUsage::StorageBuffer | rhi::RHIBufferUsage::CopyDest;
+    const render::BufferHandle bufferHandle = graph.CreateTransientBuffer(bufferDesc);
+
+    TestPass copyPass("CopyPass", rhi::RHIQueueType::Copy, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.WriteBuffer(bufferHandle, rhi::RHIResourceState::CopyDest, rhi::RHIPipelineStage::Copy);
+    });
+
+    TestPass graphicsPass("GraphicsPass", rhi::RHIQueueType::Graphics, [&](render::RenderGraphBuilder& builder)
+    {
+        builder.ReadBuffer(bufferHandle, rhi::RHIResourceState::ShaderResource,
+                           rhi::RHIPipelineStage::PixelShader);
+        builder.WriteTexture(sinkHandle, rhi::RHIResourceState::RenderTarget,
+                             rhi::RHIPipelineStage::ColorAttachmentOutput);
+    });
+
+    graph.AddPass(copyPass);
+    graph.AddPass(graphicsPass);
+
+    render::RenderGraph::ExecuteDesc executeDesc{
+        .device = device,
+        .timelineFence = fence,
+        .transientResourcePool = pool,
+    };
+
+    const uint64_t signalValue = graph.Execute(executeDesc);
+
+    assert(signalValue == 2);
+    assert(device.copyQueue.submitCount == 1);
+    assert(device.graphicsQueue.submitCount == 1);
+    assert(device.graphicsQueue.lastTimelineWaitStages.size() == 1);
+    assert(rhi::HasFlag(device.graphicsQueue.lastTimelineWaitStages[0], rhi::RHIPipelineStage::PixelShader));
+    assert(!rhi::HasFlag(device.graphicsQueue.lastTimelineWaitStages[0], rhi::RHIPipelineStage::AllCommands));
+}
+
 void TestExecuteRecordsTimestampProfiling()
 {
     ExecuteFakeDevice device;
@@ -1228,12 +1403,14 @@ int main()
     TestAliasingPlan();
     TestAliasingRejectsUsageMismatch();
     TestCrossQueueWaits();
+    TestStageAwareBarriersAndWaitStages();
     TestFinalBarrierStaysOnLastUsingBatch();
     TestDeadPassCullingRemovesUnusedBranch();
     TestDeadPassCullingKeepsSideEffectPass();
     TestUAVBarrier();
     TestDeadPassCullingSkipsUnusedTransientAllocation();
     TestExecuteBatchesBarrierSubmission();
+    TestExecuteUsesConsumingBatchWaitStage();
     TestExecuteRecordsTimestampProfiling();
     TestTransientPoolRecreatesOnAliasSlotChange();
     TestCommandListPoolReusesCompletedLists();

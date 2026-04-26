@@ -78,10 +78,12 @@ void BokehDOFPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_output.IsValid());
     WEST_ASSERT(m_frameBuffer.IsValid());
 
-    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_sceneColor, rhi::RHIResourceState::ShaderResource);
-    builder.ReadTexture(m_worldPosition, rhi::RHIResourceState::ShaderResource);
-    builder.WriteTexture(m_output, rhi::RHIResourceState::RenderTarget);
+    constexpr rhi::RHIPipelineStage pixelStage = rhi::RHIPipelineStage::PixelShader;
+    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_sceneColor, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.ReadTexture(m_worldPosition, rhi::RHIResourceState::ShaderResource, pixelStage);
+    builder.WriteTexture(m_output, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
 }
 
 void BokehDOFPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)

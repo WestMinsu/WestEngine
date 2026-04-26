@@ -8,6 +8,19 @@
 #include "core/Types.h"
 #include "platform/PlatformDetect.h"
 
+#include <cstdlib>
+
+namespace west::detail
+{
+
+[[noreturn]] inline void FatalCheckAbort()
+{
+    WEST_DEBUG_BREAK();
+    std::abort();
+}
+
+} // namespace west::detail
+
 // ── WEST_ASSERT ────────────────────────────────────────────────────────────
 // Debug-only assertion. Triggers breakpoint on failure.
 // Release builds: completely removed (zero cost).
@@ -36,7 +49,7 @@
         if (!(condition))                                                                                              \
         {                                                                                                              \
             west::Logger::Fatal("CHECK FAILED: " __VA_ARGS__);                                                         \
-            WEST_DEBUG_BREAK();                                                                                        \
+            west::detail::FatalCheckAbort();                                                                           \
         }                                                                                                              \
     } while (0)
 

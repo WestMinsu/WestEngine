@@ -21,6 +21,10 @@ class DX12Buffer final : public IRHIBuffer
 public:
     DX12Buffer() = default;
     ~DX12Buffer() override;
+    DX12Buffer(const DX12Buffer&) = delete;
+    DX12Buffer& operator=(const DX12Buffer&) = delete;
+    DX12Buffer(DX12Buffer&&) = delete;
+    DX12Buffer& operator=(DX12Buffer&&) = delete;
 
     /// Allocate a buffer via D3D12MA.
     void Initialize(DX12Device* device, const RHIBufferDesc& desc);

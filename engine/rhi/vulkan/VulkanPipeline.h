@@ -20,6 +20,10 @@ class VulkanPipeline final : public IRHIPipeline
 public:
     VulkanPipeline() = default;
     ~VulkanPipeline() override;
+    VulkanPipeline(const VulkanPipeline&) = delete;
+    VulkanPipeline& operator=(const VulkanPipeline&) = delete;
+    VulkanPipeline(VulkanPipeline&&) = delete;
+    VulkanPipeline& operator=(VulkanPipeline&&) = delete;
 
     void Initialize(VkDevice device, const RHIGraphicsPipelineDesc& desc, VkFormat swapChainFormat,
                     VkDescriptorSetLayout bindlessSetLayout);

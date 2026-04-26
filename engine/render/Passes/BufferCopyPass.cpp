@@ -24,8 +24,8 @@ void BufferCopyPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_destination.IsValid());
     WEST_ASSERT(m_sizeBytes > 0);
 
-    builder.ReadBuffer(m_source, rhi::RHIResourceState::CopySource);
-    builder.WriteBuffer(m_destination, rhi::RHIResourceState::CopyDest);
+    builder.ReadBuffer(m_source, rhi::RHIResourceState::CopySource, rhi::RHIPipelineStage::Copy);
+    builder.WriteBuffer(m_destination, rhi::RHIResourceState::CopyDest, rhi::RHIPipelineStage::Copy);
 }
 
 void BufferCopyPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)

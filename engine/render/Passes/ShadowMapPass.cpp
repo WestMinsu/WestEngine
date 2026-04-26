@@ -1,6 +1,6 @@
 // =============================================================================
 // WestEngine - Render
-// Directional-light shadow map pass for // =============================================================================
+// Directional-light shadow map pass
 #include "render/Passes/ShadowMapPass.h"
 
 #include "core/Assert.h"
@@ -84,28 +84,34 @@ void ShadowMapPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_frameBuffer.IsValid());
     WEST_ASSERT(m_materialBuffer.IsValid());
 
-    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadBuffer(m_materialBuffer, rhi::RHIResourceState::ShaderResource);
+    constexpr rhi::RHIPipelineStage graphicsStage = rhi::RHIPipelineStage::AllGraphics;
+    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource, graphicsStage);
+    builder.ReadBuffer(m_materialBuffer, rhi::RHIResourceState::ShaderResource, graphicsStage);
     if (m_sharedVertexBuffer.IsValid())
     {
-        builder.ReadBuffer(m_sharedVertexBuffer, rhi::RHIResourceState::VertexBuffer);
+        builder.ReadBuffer(m_sharedVertexBuffer, rhi::RHIResourceState::VertexBuffer,
+                           rhi::RHIPipelineStage::VertexInput);
     }
     if (m_sharedIndexBuffer.IsValid())
     {
-        builder.ReadBuffer(m_sharedIndexBuffer, rhi::RHIResourceState::IndexBuffer);
+        builder.ReadBuffer(m_sharedIndexBuffer, rhi::RHIResourceState::IndexBuffer,
+                           rhi::RHIPipelineStage::VertexInput);
     }
     for (const StaticMeshDrawItem& draw : m_draws)
     {
         if (draw.vertexBufferHandle.IsValid())
         {
-            builder.ReadBuffer(draw.vertexBufferHandle, rhi::RHIResourceState::VertexBuffer);
+            builder.ReadBuffer(draw.vertexBufferHandle, rhi::RHIResourceState::VertexBuffer,
+                               rhi::RHIPipelineStage::VertexInput);
         }
         if (draw.indexBufferHandle.IsValid())
         {
-            builder.ReadBuffer(draw.indexBufferHandle, rhi::RHIResourceState::IndexBuffer);
+            builder.ReadBuffer(draw.indexBufferHandle, rhi::RHIResourceState::IndexBuffer,
+                               rhi::RHIPipelineStage::VertexInput);
         }
     }
-    builder.WriteTexture(m_shadowMap, rhi::RHIResourceState::DepthStencilWrite);
+    builder.WriteTexture(m_shadowMap, rhi::RHIResourceState::DepthStencilWrite,
+                         rhi::RHIPipelineStage::DepthStencil);
 }
 
 void ShadowMapPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)
@@ -184,20 +190,12 @@ void ShadowMapPass::CreatePipeline()
     std::vector<uint8_t> vertexShader;
     std::vector<uint8_t> fragmentShader;
 
-    if (m_backend == rhi::RHIBackend::DX12)
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ShadowMap.vs.dxil", vertexShader),
-                   "Failed to load ShadowMap DXIL vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ShadowMap.ps.dxil", fragmentShader),
-                   "Failed to load ShadowMap DXIL fragment shader");
-    }
-    else
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ShadowMap.vs.spv", vertexShader),
-                   "Failed to load ShadowMap SPIR-V vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("ShadowMap.ps.spv", fragmentShader),
-                   "Failed to load ShadowMap SPIR-V fragment shader");
-    }
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "ShadowMap",
+                                                         shader::ShaderCompiler::Stage::Vertex, vertexShader),
+               "Failed to load ShadowMap vertex shader");
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "ShadowMap",
+                                                         shader::ShaderCompiler::Stage::Fragment, fragmentShader),
+               "Failed to load ShadowMap fragment shader");
 
     rhi::RHIVertexAttribute vertexAttributes[] = {
         {"POSITION", rhi::RHIFormat::RGB32_FLOAT, 0},

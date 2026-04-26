@@ -8,6 +8,8 @@
 #include "rhi/dx12/DX12Device.h"
 #include "rhi/dx12/DX12MemoryAllocator.h"
 
+#include <utility>
+
 namespace west::rhi
 {
 
@@ -150,8 +152,29 @@ void CreateViewsIfNeeded(DX12Device* device, ID3D12Resource* resource, const RHI
 
 } // namespace
 
+DX12Texture::DX12Texture(DX12Texture&& other) noexcept
+    : m_allocation(std::exchange(other.m_allocation, nullptr))
+    , m_aliasingAllocation(std::move(other.m_aliasingAllocation))
+    , m_resource(std::exchange(other.m_resource, nullptr))
+    , m_rtvHeap(std::move(other.m_rtvHeap))
+    , m_dsvHeap(std::move(other.m_dsvHeap))
+    , m_rtvHandle(std::exchange(other.m_rtvHandle, {}))
+    , m_dsvHandle(std::exchange(other.m_dsvHandle, {}))
+    , m_desc(other.m_desc)
+    , m_bindlessIndex(std::exchange(other.m_bindlessIndex, kInvalidBindlessIndex))
+    , m_device(std::exchange(other.m_device, nullptr))
+    , m_ownsResource(std::exchange(other.m_ownsResource, false))
+    , m_isAliased(std::exchange(other.m_isAliased, false))
+{
+}
+
 DX12Texture::~DX12Texture()
 {
+    if (m_device && m_bindlessIndex != kInvalidBindlessIndex)
+    {
+        m_device->UnregisterBindlessResource(this);
+    }
+
     if (m_isAliased && m_resource)
     {
         ID3D12Resource* resource = m_resource;

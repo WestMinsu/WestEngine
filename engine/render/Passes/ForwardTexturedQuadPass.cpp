@@ -64,7 +64,8 @@ void ForwardTexturedQuadPass::Configure(TextureHandle sceneColor, const std::arr
 void ForwardTexturedQuadPass::Setup(RenderGraphBuilder& builder)
 {
     WEST_ASSERT(m_sceneColor.IsValid());
-    builder.WriteTexture(m_sceneColor, rhi::RHIResourceState::RenderTarget);
+    builder.WriteTexture(m_sceneColor, rhi::RHIResourceState::RenderTarget,
+                         rhi::RHIPipelineStage::ColorAttachmentOutput);
 }
 
 void ForwardTexturedQuadPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)
@@ -113,20 +114,12 @@ void ForwardTexturedQuadPass::CreatePipeline()
     std::vector<uint8_t> vertexShader;
     std::vector<uint8_t> fragmentShader;
 
-    if (m_backend == rhi::RHIBackend::DX12)
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.vs.dxil", vertexShader),
-                   "Failed to load TexturedQuad DXIL vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.ps.dxil", fragmentShader),
-                   "Failed to load TexturedQuad DXIL fragment shader");
-    }
-    else
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.vs.spv", vertexShader),
-                   "Failed to load TexturedQuad SPIR-V vertex shader");
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("TexturedQuad.ps.spv", fragmentShader),
-                   "Failed to load TexturedQuad SPIR-V fragment shader");
-    }
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "TexturedQuad",
+                                                         shader::ShaderCompiler::Stage::Vertex, vertexShader),
+               "Failed to load TexturedQuad vertex shader");
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "TexturedQuad",
+                                                         shader::ShaderCompiler::Stage::Fragment, fragmentShader),
+               "Failed to load TexturedQuad fragment shader");
 
     rhi::RHIVertexAttribute vertexAttributes[] = {
         {"POSITION", rhi::RHIFormat::RGB32_FLOAT, 0},

@@ -58,11 +58,18 @@ void DX12Fence::Wait(uint64_t value, uint64_t timeoutNs)
     }
 
     DWORD result = ::WaitForSingleObject(m_fenceEvent, timeoutMs);
+    if (result == WAIT_OBJECT_0)
+    {
+        return;
+    }
     if (result == WAIT_TIMEOUT)
     {
         WEST_LOG_WARNING(LogCategory::RHI, "DX12 Fence wait timed out (target: {}, completed: {})", value,
                          m_fence->GetCompletedValue());
+        return;
     }
+
+    WEST_CHECK(false, "DX12 Fence wait failed. Win32 error: {}", static_cast<uint32_t>(::GetLastError()));
 }
 
 uint64_t DX12Fence::AdvanceValue()

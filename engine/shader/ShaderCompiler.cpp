@@ -7,6 +7,7 @@
 #include "core/Logger.h"
 
 #include <fstream>
+#include <string>
 
 #ifndef WEST_SHADER_OUTPUT_DIR
 #define WEST_SHADER_OUTPUT_DIR "build/shaders"
@@ -52,6 +53,37 @@ bool ShaderCompiler::LoadBytecode(std::string_view relativePath, std::vector<uin
 
     WEST_LOG_INFO(LogCategory::Shader, "Loaded shader bytecode '{}' ({} bytes)", shaderPath.string(), fileSize);
     return true;
+}
+
+bool ShaderCompiler::LoadStageBytecode(rhi::RHIBackend backend, std::string_view shaderName,
+                                       Stage stage, std::vector<uint8_t>& outBytecode)
+{
+    std::string relativePath(shaderName);
+
+    switch (stage)
+    {
+    case Stage::Vertex:
+        relativePath += ".vs";
+        break;
+    case Stage::Fragment:
+        relativePath += ".ps";
+        break;
+    case Stage::Compute:
+        relativePath += ".cs";
+        break;
+    }
+
+    switch (backend)
+    {
+    case rhi::RHIBackend::DX12:
+        relativePath += ".dxil";
+        break;
+    case rhi::RHIBackend::Vulkan:
+        relativePath += ".spv";
+        break;
+    }
+
+    return LoadBytecode(relativePath, outBytecode);
 }
 
 } // namespace west::shader

@@ -69,10 +69,11 @@ void GPUDrivenCullingPass::Setup(RenderGraphBuilder& builder)
     WEST_ASSERT(m_indirectCount.IsValid());
     WEST_ASSERT(m_drawCount > 0);
 
-    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadBuffer(m_drawBuffer, rhi::RHIResourceState::ShaderResource);
-    builder.ReadWriteBuffer(m_indirectArgs, rhi::RHIResourceState::UnorderedAccess);
-    builder.ReadWriteBuffer(m_indirectCount, rhi::RHIResourceState::UnorderedAccess);
+    constexpr rhi::RHIPipelineStage stage = rhi::RHIPipelineStage::ComputeShader;
+    builder.ReadBuffer(m_frameBuffer, rhi::RHIResourceState::ShaderResource, stage);
+    builder.ReadBuffer(m_drawBuffer, rhi::RHIResourceState::ShaderResource, stage);
+    builder.ReadWriteBuffer(m_indirectArgs, rhi::RHIResourceState::UnorderedAccess, stage);
+    builder.ReadWriteBuffer(m_indirectCount, rhi::RHIResourceState::UnorderedAccess, stage);
 }
 
 void GPUDrivenCullingPass::Execute(RenderGraphContext& context, rhi::IRHICommandList& commandList)
@@ -118,16 +119,9 @@ void GPUDrivenCullingPass::CreatePipeline()
 {
     std::vector<uint8_t> computeShader;
 
-    if (m_backend == rhi::RHIBackend::DX12)
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("GPUDrivenCulling.cs.dxil", computeShader),
-                   "Failed to load GPUDrivenCulling DXIL compute shader");
-    }
-    else
-    {
-        WEST_CHECK(shader::ShaderCompiler::LoadBytecode("GPUDrivenCulling.cs.spv", computeShader),
-                   "Failed to load GPUDrivenCulling SPIR-V compute shader");
-    }
+    WEST_CHECK(shader::ShaderCompiler::LoadStageBytecode(m_backend, "GPUDrivenCulling",
+                                                         shader::ShaderCompiler::Stage::Compute, computeShader),
+               "Failed to load GPUDrivenCulling compute shader");
 
     rhi::RHIComputePipelineDesc pipelineDesc{};
     pipelineDesc.computeShader = std::span<const uint8_t>(computeShader.data(), computeShader.size());

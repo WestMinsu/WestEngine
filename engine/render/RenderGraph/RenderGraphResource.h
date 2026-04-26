@@ -58,6 +58,7 @@ struct ResourceUse
     uint32_t resourceIndex = kInvalidRenderGraphIndex;
     rhi::RHIResourceState state = rhi::RHIResourceState::Common;
     ResourceAccessType accessType = ResourceAccessType::Read;
+    rhi::RHIPipelineStage stageMask = rhi::RHIPipelineStage::Auto;
 };
 
 struct ResourceLifetime

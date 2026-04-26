@@ -16,7 +16,11 @@ class DX12TimestampQueryPool final : public IRHITimestampQueryPool
 {
 public:
     DX12TimestampQueryPool() = default;
-    ~DX12TimestampQueryPool() override = default;
+    ~DX12TimestampQueryPool() override;
+    DX12TimestampQueryPool(const DX12TimestampQueryPool&) = delete;
+    DX12TimestampQueryPool& operator=(const DX12TimestampQueryPool&) = delete;
+    DX12TimestampQueryPool(DX12TimestampQueryPool&&) = delete;
+    DX12TimestampQueryPool& operator=(DX12TimestampQueryPool&&) = delete;
 
     void Initialize(DX12Device* device, const RHITimestampQueryPoolDesc& desc);
 
@@ -44,6 +48,7 @@ public:
     }
 
 private:
+    DX12Device* m_ownerDevice = nullptr;
     RHITimestampQueryPoolDesc m_desc{};
     ComPtr<ID3D12QueryHeap> m_queryHeap;
     ComPtr<ID3D12Resource> m_readbackBuffer;

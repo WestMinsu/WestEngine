@@ -44,6 +44,18 @@ int main()
     assert(pool.Free(reused));
     assert(pool.GetAllocatedCount() == 0);
 
+    BindlessPool resourcePool(2);
+    BindlessPool samplerPool(2);
+    BindlessIndex resourceIndex = resourcePool.Allocate();
+    BindlessIndex samplerIndex = samplerPool.Allocate();
+    assert(resourceIndex == 0);
+    assert(samplerIndex == 0);
+    assert(resourcePool.IsAllocated(resourceIndex));
+    assert(samplerPool.IsAllocated(samplerIndex));
+    assert(samplerPool.Free(samplerIndex));
+    assert(resourcePool.IsAllocated(resourceIndex));
+    assert(resourcePool.Free(resourceIndex));
+
     std::cout << "BindlessPool tests passed\n";
     return 0;
 }

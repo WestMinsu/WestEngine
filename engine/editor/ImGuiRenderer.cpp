@@ -150,11 +150,11 @@ struct ImGuiRenderer::Impl
     {
         if (fontSampler && fontSampler->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
         {
-            device.UnregisterBindlessResource(fontSampler->GetBindlessIndex());
+            device.UnregisterBindlessResource(fontSampler.get());
         }
         if (fontTexture && fontTexture->GetBindlessIndex() != rhi::kInvalidBindlessIndex)
         {
-            device.UnregisterBindlessResource(fontTexture->GetBindlessIndex());
+            device.UnregisterBindlessResource(fontTexture.get());
         }
         if (context != nullptr)
         {

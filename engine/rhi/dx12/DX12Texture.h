@@ -21,6 +21,10 @@ class DX12Texture final : public IRHITexture
 public:
     DX12Texture() = default;
     ~DX12Texture() override;
+    DX12Texture(const DX12Texture&) = delete;
+    DX12Texture& operator=(const DX12Texture&) = delete;
+    DX12Texture(DX12Texture&& other) noexcept;
+    DX12Texture& operator=(DX12Texture&&) = delete;
 
     /// Allocate an owned texture via D3D12MA.
     void Initialize(DX12Device* device, const RHITextureDesc& desc);

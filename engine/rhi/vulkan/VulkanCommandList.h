@@ -11,13 +11,19 @@
 namespace west::rhi
 {
 
+class VulkanDevice;
+
 class VulkanCommandList final : public IRHICommandList
 {
 public:
     VulkanCommandList() = default;
     ~VulkanCommandList() override;
+    VulkanCommandList(const VulkanCommandList&) = delete;
+    VulkanCommandList& operator=(const VulkanCommandList&) = delete;
+    VulkanCommandList(VulkanCommandList&&) = delete;
+    VulkanCommandList& operator=(VulkanCommandList&&) = delete;
 
-    void Initialize(VkDevice device, uint32_t queueFamilyIndex, RHIQueueType type,
+    void Initialize(VulkanDevice* ownerDevice, VkDevice device, uint32_t queueFamilyIndex, RHIQueueType type,
                     VkDeviceAddress bindlessDescriptorBufferAddress,
                     PFN_vkCmdBindDescriptorBuffersEXT bindDescriptorBuffers,
                     PFN_vkCmdSetDescriptorBufferOffsetsEXT setDescriptorBufferOffsets);
@@ -67,6 +73,7 @@ public:
     }
 
 private:
+    VulkanDevice* m_ownerDevice = nullptr;
     VkDevice m_device = VK_NULL_HANDLE;
     VkCommandPool m_cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer m_cmdBuffer = VK_NULL_HANDLE;

@@ -12,11 +12,35 @@
 namespace west::rhi
 {
 
+DX12TimestampQueryPool::~DX12TimestampQueryPool()
+{
+    if (!m_ownerDevice)
+    {
+        m_queryHeap.Reset();
+        m_readbackBuffer.Reset();
+        return;
+    }
+
+    ComPtr<ID3D12QueryHeap> queryHeap = std::move(m_queryHeap);
+    ComPtr<ID3D12Resource> readbackBuffer = std::move(m_readbackBuffer);
+    if (queryHeap || readbackBuffer)
+    {
+        m_ownerDevice->EnqueueDeferredDeletion(
+            [queryHeap = std::move(queryHeap), readbackBuffer = std::move(readbackBuffer)]() mutable
+            {
+                queryHeap.Reset();
+                readbackBuffer.Reset();
+            },
+            m_ownerDevice->GetCurrentFrameFenceValue());
+    }
+}
+
 void DX12TimestampQueryPool::Initialize(DX12Device* device, const RHITimestampQueryPoolDesc& desc)
 {
     WEST_ASSERT(device != nullptr);
     WEST_ASSERT(desc.queryCount > 0);
 
+    m_ownerDevice = device;
     m_desc = desc;
 
     D3D12_QUERY_HEAP_DESC queryHeapDesc{};

@@ -11,6 +11,33 @@
 namespace west::rhi
 {
 
+[[nodiscard]] inline bool IsBlockCompressedFormat(RHIFormat format) noexcept
+{
+    switch (format)
+    {
+    case RHIFormat::BC1_UNORM:
+    case RHIFormat::BC1_UNORM_SRGB:
+    case RHIFormat::BC3_UNORM:
+    case RHIFormat::BC3_UNORM_SRGB:
+    case RHIFormat::BC5_UNORM:
+    case RHIFormat::BC7_UNORM:
+    case RHIFormat::BC7_UNORM_SRGB:
+        return true;
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] inline uint32_t GetFormatBlockWidth(RHIFormat format) noexcept
+{
+    return IsBlockCompressedFormat(format) ? 4u : 1u;
+}
+
+[[nodiscard]] inline uint32_t GetFormatBlockHeight(RHIFormat format) noexcept
+{
+    return IsBlockCompressedFormat(format) ? 4u : 1u;
+}
+
 /// Returns the byte size of a single element for the given format.
 /// Compressed formats return the block size.
 [[nodiscard]] inline uint32_t GetFormatByteSize(RHIFormat format) noexcept
@@ -51,6 +78,15 @@ namespace west::rhi
     case RHIFormat::D24_UNORM_S8_UINT:
     case RHIFormat::D32_FLOAT_S8_UINT:
         return 4;
+    case RHIFormat::BC1_UNORM:
+    case RHIFormat::BC1_UNORM_SRGB:
+        return 8;
+    case RHIFormat::BC3_UNORM:
+    case RHIFormat::BC3_UNORM_SRGB:
+    case RHIFormat::BC5_UNORM:
+    case RHIFormat::BC7_UNORM:
+    case RHIFormat::BC7_UNORM_SRGB:
+        return 16;
     default:
         return 0;
     }

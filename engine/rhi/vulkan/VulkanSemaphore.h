@@ -15,6 +15,10 @@ class VulkanSemaphore final : public IRHISemaphore
 public:
     VulkanSemaphore() = default;
     ~VulkanSemaphore() override;
+    VulkanSemaphore(const VulkanSemaphore&) = delete;
+    VulkanSemaphore& operator=(const VulkanSemaphore&) = delete;
+    VulkanSemaphore(VulkanSemaphore&&) = delete;
+    VulkanSemaphore& operator=(VulkanSemaphore&&) = delete;
 
     void Initialize(VkDevice device);
 

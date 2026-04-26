@@ -161,6 +161,26 @@ enum class RHIResourceState : uint32
 };
 WEST_ENUM_FLAGS(RHIResourceState);
 
+// ── Pipeline Stage Mask (Barrier / Queue Wait) ────────────────────────────
+
+enum class RHIPipelineStage : uint32
+{
+    Auto = 0,
+    TopOfPipe = 1 << 0,
+    DrawIndirect = 1 << 1,
+    VertexInput = 1 << 2,
+    VertexShader = 1 << 3,
+    PixelShader = 1 << 4,
+    ComputeShader = 1 << 5,
+    ColorAttachmentOutput = 1 << 6,
+    DepthStencil = 1 << 7,
+    Copy = 1 << 8,
+    BottomOfPipe = 1 << 9,
+    AllGraphics = 1 << 10,
+    AllCommands = 1 << 11,
+};
+WEST_ENUM_FLAGS(RHIPipelineStage);
+
 // ── Fixed-Function Pipeline Enums ─────────────────────────────────────────
 
 enum class RHIPrimitiveTopology : uint8

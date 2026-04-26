@@ -41,11 +41,42 @@ struct TextureAssetData
     std::vector<TextureSubresourceData> subresources;
 };
 
+struct TextureAssetLoadOptions
+{
+    bool enableCache = true;
+    bool generateMipChain = true;
+    uint32_t maxDimension = 0;
+};
+
+struct TextureAssetLoadStats
+{
+    bool usedCache = false;
+    bool cacheWritten = false;
+    bool usedSourceImageCache = false;
+    bool sourceImageCacheWritten = false;
+    double cacheReadMs = 0.0;
+    double sourceImageCacheReadMs = 0.0;
+    double decodeMs = 0.0;
+    double mipBuildMs = 0.0;
+    double cacheWriteMs = 0.0;
+    double totalLoadMs = 0.0;
+};
+
+struct LoadedTextureAssetData
+{
+    TextureAssetData texture;
+    TextureAssetLoadStats stats;
+};
+
 [[nodiscard]] TextureAssetData BuildTexture2DAssetRGBA8(std::string debugName, ImageData image, bool sRGB,
                                                         bool generateMipChain = true);
 
+[[nodiscard]] std::optional<LoadedTextureAssetData> LoadTexture2DAssetRGBA8WithStats(
+    const std::filesystem::path& sourcePath, std::string debugName, bool sRGB,
+    const TextureAssetLoadOptions& options = {});
+
 [[nodiscard]] std::optional<TextureAssetData> LoadTexture2DAssetRGBA8(
-    const std::filesystem::path& sourcePath, bool sRGB, const ImageLoadOptions& options = {});
+    const std::filesystem::path& sourcePath, bool sRGB, const TextureAssetLoadOptions& options = {});
 
 [[nodiscard]] std::optional<TextureAssetData> LoadKtx2CubemapAsset(const std::filesystem::path& sourcePath);
 

@@ -1,6 +1,6 @@
 // =============================================================================
 // WestEngine - Render
-// Directional-light shadow map pass for // =============================================================================
+// Directional-light shadow map pass
 #pragma once
 
 #include "render/Passes/SceneDraw.h"
