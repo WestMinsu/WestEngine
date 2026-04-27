@@ -1,14 +1,13 @@
 <h1 align="center">WestEngine</h1>
 
 <p align="center">
-  <b>DX12 / Vulkan 1.3 Dual-Backend Rendering Engine</b><br>
+  <b>DirectX 12 / Vulkan  Dual-Backend Rendering Engine</b><br>
   Bindless RHI · Render Graph · GPU-Driven Rendering · Deferred PBR Pipeline
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/C%2B%2B-20-blue?style=flat-square" alt="C++20">
-  <img src="https://img.shields.io/badge/DirectX-12-green?style=flat-square" alt="DX12">
-  <img src="https://img.shields.io/badge/Vulkan-1.3-red?style=flat-square" alt="Vulkan 1.3">
+  <img src="https://img.shields.io/badge/DirectX 12-green?style=flat-square" alt="DX12">
+  <img src="https://img.shields.io/badge/Vulkan-red?style=flat-square" alt="Vulkan">
   <img src="https://img.shields.io/badge/Shader-Slang-orange?style=flat-square" alt="Slang">
 </p>
 
@@ -20,7 +19,7 @@
 
 ## 프로젝트 소개
 
-WestEngine은 **DX12와 Vulkan 1.3 듀얼 백엔드**를 하나의 RHI(Rendering Hardware Interface)로 추상화한 렌더링 엔진입니다.
+WestEngine은 **DirectX 12와 Vulkan 듀얼 백엔드**를 하나의 RHI(Rendering Hardware Interface)로 추상화한 렌더링 엔진입니다.
 
 GPU 리소스 수명 관리, Render Graph 기반 프레임 실행, Bindless Descriptor Model, 2.84M triangles 규모 대형 Static Scene의 GPU-Driven 렌더링을 직접 설계하고 구현하였습니다.
 
