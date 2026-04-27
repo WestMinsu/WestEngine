@@ -1,7 +1,7 @@
 <h1 align="center">WestEngine</h1>
 
 <p align="center">
-  <b>DirectX 12 / Vulkan  Dual-Backend Rendering Engine</b><br>
+  <b>DirectX 12 / Vulkan Dual-Backend Rendering Engine</b><br>
   Bindless RHI · Render Graph · GPU-Driven Rendering · Deferred PBR Pipeline
 </p>
 
@@ -17,7 +17,7 @@ WestEngine은 **DirectX 12와 Vulkan 듀얼 백엔드**를 하나의 RHI(Renderi
 
 GPU 리소스 수명 관리, Render Graph 기반 프레임 실행, Bindless Descriptor Model, 2.84M triangles 규모 대형 Static Scene의 GPU-Driven 렌더링을 직접 설계하고 구현하였습니다.
 
-크로스 플랫폼을 고려하여 DXIL/SPIR-V 외에 Metal Shading Language로의 크로스 컴파일을 지원하는 구조입니다. RHI에 `MetalDevice` 구현체만 추가하면 셰이더 파이프라인은 변경 없이 작동하도록 설계하였습니다.
+주 타겟은 Windows PC 렌더링이지만, DX12/Vulkan 백엔드를 분리하고 DXIL/SPIR-V 외에 Metal Shading Language로의 크로스 컴파일을 지원하도록 설계했습니다. RHI에 `MetalDevice` 구현체를 추가하면 셰이더 파이프라인은 변경 없이 확장 가능한 구조를 목표로 합니다.
 
 > **Demo Scene:** Amazon Lumberyard Bistro (약 2.84M triangles) — DX12/Vulkan 동일 코드 경로로 실행
 
@@ -120,8 +120,8 @@ Scene Draw Records (GPU Buffer)
 | **GBuffer** | WorldPos · Normal · Albedo · Metallic/Roughness | Alpha discard (foliage/glass) 지원 |
 | **ShadowMap** | Depth (directional) | 16-tap Rotated Poisson Disk PCF |
 | **SSAO** | R16_FLOAT AO map | World-space position + normal 기반 |
-| **DeferredLighting** | HDR scene color | Cook-Torrance BRDF + Fdez-Aguera multi-scattering 보정 |
-| **IBL** | Diffuse irradiance + Specular GGX prefiltered cubemap + BRDF LUT | Asset-driven HDR environment |
+| **DeferredLighting** | HDR scene color | Cook-Torrance BRDF (Trowbridge-Reitz GGX NDF + Smith-GGX Geometry + Fresnel-Schlick) + Fdez-Aguera multi-scattering 보정 |
+| **IBL** | Diffuse irradiance + Specular GGX prefiltered cubemap + BRDF LUT | Split-sum approximation, HDR environment |
 | **BokehDOF** | DOF 적용 HDR color | Hexagonal highlight-weighted blur, screen-center autofocus |
 | **ToneMapping** | LDR back buffer | ACES / Reinhard / Uncharted2 / Gran Turismo / Lottes 등 9종 |
 
@@ -147,13 +147,14 @@ Scene Draw Records (GPU Buffer)
 - Per-pass descriptor set 교체 없이 **push constant로 BindlessIndex만 전달**
 - Vulkan의 `VK_KHR_buffer_device_address` 활용
 - 셰이더 코드가 API-agnostic하게 리소스 접근
+- **설계 의도:** Draw call 간 descriptor set 바인딩 교체를 제거하여 GPU command processor의 파이프라인 버블 최소화. 바인딩 모델이 아닌 인덱싱 모델이므로 Apple Silicon의 Argument Buffer에도 오버헤드 없이 매핑 가능
 
 ### 4. Render Graph
 
 - **자동 Barrier 해결**: Pass가 리소스 사용 의도(Read/Write/RenderTarget)만 선언하면 컴파일러가 최적 state transition 삽입
 - **DX12 Enhanced Barriers** (`ID3D12GraphicsCommandList7::Barrier`) 지원 + legacy fallback
 - **Vulkan `vkCmdPipelineBarrier2`** 에 narrower stage mask 전달
-- **Transient Resource Aliasing**: G-Buffer 등 일시적 리소스의 VRAM 블록 재사용 (Aliasing Barrier)
+- **Transient Resource Aliasing**: G-Buffer 등 동시에 alive하지 않는 render target들이 동일 VRAM 블록을 공유하여 peak memory 절감 (Aliasing Barrier)
 - **런타임 통계**: Pass count, resource count, queue batch count, barrier count를 telemetry에 노출
 
 ### 5. 동기화 & 리소스 수명
@@ -187,6 +188,18 @@ Scene Draw Records (GPU Buffer)
 
 - **Slang**: 하나의 셰이더 소스로 DXIL + SPIR-V 크로스 컴파일
 - Reflection은 **metadata 추출 전용** — Global Descriptor Layout은 고정이므로 descriptor set 생성에 사용하지 않음
+
+### Slang을 채택한 이유 (vs HLSL + DXC)
+
+HLSL도 DXC를 통해 DXIL과 SPIR-V를 모두 생성할 수 있지만, 다음 이유로 Slang을 선택하였습니다:
+
+| 비교 항목 | HLSL + DXC | Slang |
+|---|---|---|
+| **SPIR-V 경로** | DXC의 SPIR-V 백엔드는 공식 지원이 아닌 커뮤니티 유지보수. HLSL 시맨틱과 Vulkan 바인딩 모델 불일치로 `[[vk::binding]]` 등 Vulkan 전용 어노테이션 필요 | 네이티브 SPIR-V 백엔드. 바인딩 모델 변환을 컴파일러가 자동 처리 |
+| **모듈 시스템** | `#include` 기반 텍스트 치환. 셰이더 간 공유 코드 관리에 한계 | `import` 기반 모듈 시스템. `import Common.GlobalBindless;`로 Bindless 배열 선언을 모든 셰이더에서 재사용 |
+| **Uber-Shader 대안** | `#ifdef` 분기 폭발. GPU instruction cache 적중률 저하 | `interface` + generics로 **컴파일 타임 다형성** 지원. Specialization 자동 생성 |
+| **크로스 플랫폼 확장** | MSL 미지원. Metal 포팅 시 별도 셰이더 작성 또는 SPIRV-Cross 의존 | DXIL · SPIR-V · **MSL** 크로스 컴파일 네이티브 지원. `MetalDevice` 추가 시 셰이더 변경 불필요 |
+| **디버깅** | PIX에서 HLSL 소스 디버깅 지원 | `-Zi` 플래그로 PDB/디버그 심볼 생성. PIX · RenderDoc 모두 원본 Slang 소스로 매핑 |
 
 ---
 
@@ -232,10 +245,29 @@ WestEngine/
 
 - Mesh/Instance 유닛: 22,396 → **128** (material + transform 기준 자동 merge)
 
+### Runtime Performance
+
+측정 기준:
+
+- **Build:** Release
+- **Scene:** Amazon Lumberyard Bistro, 1024px material texture cap, GPU-driven path ON
+- **Resolution:** 1920x1061 client area
+- **GPU:** NVIDIA GeForce RTX 3060
+- **Validation / GPU crash diagnostics:** OFF
+- **VSync:** OFF (현재 기본 swapchain 설정)
+- **Sample:** warm-up 120 frames 이후 600 frames 측정, 3회 반복 중 median 값
+
+| Backend | Avg FPS | CPU Avg | CPU P95 | GPU Avg | GPU P95 |
+|---|---:|---:|---:|---:|---:|
+| **DX12** | **272.3** | **3.672 ms** | **4.016 ms** | **3.635 ms** | **3.966 ms** |
+| **Vulkan** | **279.4** | **3.579 ms** | **3.923 ms** | **3.464 ms** | **3.815 ms** |
+
+> P95는 측정 프레임 중 95%가 해당 시간 이하로 완료되었음을 의미합니다.
+
 ### GPU-Driven Evidence
 
 - GPU Compute Shader가 Frustum Culling을 수행하고, 결과를 Indirect Arguments Buffer에 기록
-- GBuffer 패스는 128개 개별 draw call 대신 1회의 Indirect Draw로 전체 씬을 제출 (DX12 ExecuteIndirect / Vulkan DrawIndexedIndirectCount)
+- GBuffer 패스는 128개 개별 draw call 대신 1회의 Indirect Draw 호출로 전체 씬을 처리 (DX12 ExecuteIndirect / Vulkan DrawIndexedIndirectCount)
 
 ---
 
@@ -243,8 +275,8 @@ WestEngine/
 
 | 분류 | 기술 |
 |---|---|
-| **언어** | C++20, Slang (shader), Python (tooling) |
-| **Graphics API** | DirectX 12 (SM 6.6), Vulkan 1.3 |
+| **언어** | C++20 (`std::span`, `std::format`, designated initializers, concepts), Slang (shader) |
+| **Graphics API** | DirectX 12 (SM 6.8), Vulkan 1.3 |
 | **빌드** | CMake 3.25+, vcpkg (manifest mode), CMake Presets |
 | **메모리** | D3D12 Memory Allocator (D3D12MA), Vulkan Memory Allocator (VMA) |
 | **셰이더** | Slang → DXIL + SPIR-V cross-compile |
