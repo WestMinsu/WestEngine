@@ -38,9 +38,8 @@ set(WEST_SHADER_METADATA_HEADER "${WEST_SHADER_GENERATED_DIR}/ShaderMetadata.h"
 file(MAKE_DIRECTORY "${WEST_SHADER_OUTPUT_DIR}")
 file(MAKE_DIRECTORY "${WEST_SHADER_GENERATED_DIR}")
 
-add_custom_target(west_shaders)
-
 set_property(GLOBAL PROPERTY WEST_SHADER_REFLECTION_JSONS "")
+set_property(GLOBAL PROPERTY WEST_SHADER_SOURCES "")
 set_property(GLOBAL PROPERTY WEST_SHADER_OUTPUTS "")
 
 function(west_add_slang_shader)
@@ -66,6 +65,11 @@ function(west_add_slang_shader)
     if(NOT EXISTS "${_source}")
         message(FATAL_ERROR "Shader source does not exist: ${_source}")
     endif()
+
+    get_property(_all_shader_sources GLOBAL PROPERTY WEST_SHADER_SOURCES)
+    list(APPEND _all_shader_sources "${_source}")
+    list(REMOVE_DUPLICATES _all_shader_sources)
+    set_property(GLOBAL PROPERTY WEST_SHADER_SOURCES "${_all_shader_sources}")
 
     set(_shader_outputs "")
     set(_reflection_outputs "")
@@ -149,8 +153,6 @@ function(west_add_slang_shader)
         message(FATAL_ERROR "west_add_slang_shader(${ARG_NAME}) requires at least one entry point")
     endif()
 
-    add_custom_target("${ARG_NAME}_shader_outputs" DEPENDS ${_shader_outputs})
-
     get_property(_all_reflections GLOBAL PROPERTY WEST_SHADER_REFLECTION_JSONS)
     list(APPEND _all_reflections ${_reflection_outputs})
     set_property(GLOBAL PROPERTY WEST_SHADER_REFLECTION_JSONS "${_all_reflections}")
@@ -162,6 +164,7 @@ endfunction()
 
 function(west_finalize_slang_shaders)
     get_property(_all_reflections GLOBAL PROPERTY WEST_SHADER_REFLECTION_JSONS)
+    get_property(_all_shader_sources GLOBAL PROPERTY WEST_SHADER_SOURCES)
     get_property(_all_shader_outputs GLOBAL PROPERTY WEST_SHADER_OUTPUTS)
 
     if(NOT _all_reflections OR NOT _all_shader_outputs)
@@ -179,6 +182,13 @@ function(west_finalize_slang_shaders)
         VERBATIM
     )
 
-    add_custom_target(west_shader_metadata DEPENDS "${WEST_SHADER_METADATA_HEADER}")
-    add_dependencies(west_shaders west_shader_metadata)
+    set_source_files_properties(${_all_shader_outputs} "${WEST_SHADER_METADATA_HEADER}"
+        PROPERTIES
+            GENERATED TRUE
+    )
+
+    set(WEST_SHADER_BUILD_OUTPUTS ${_all_shader_outputs} "${WEST_SHADER_METADATA_HEADER}"
+        CACHE INTERNAL "WestEngine generated shader files")
+    set(WEST_SHADER_SOURCES ${_all_shader_sources}
+        CACHE INTERNAL "WestEngine Slang shader source files")
 endfunction()

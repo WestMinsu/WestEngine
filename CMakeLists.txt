@@ -4,6 +4,8 @@
 # =============================================================================
 cmake_minimum_required(VERSION 3.21)
 
+set(CMAKE_SUPPRESS_REGENERATION ON)
+
 # ── vcpkg Toolchain ─────────────────────────────────────────────────────────
 # Must be set BEFORE project() for vcpkg manifest mode to work.
 # A stale cached path causes CMakeDetermineSystem.cmake to fail before configure.
@@ -139,33 +141,37 @@ west_finalize_slang_shaders()
 add_subdirectory(engine)
 
 # ── Tests ───────────────────────────────────────────────────────────────────
-option(WEST_BUILD_TESTS "Build unit tests" ON)
+option(WEST_BUILD_TESTS "Build unit tests" OFF)
 if(WEST_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
 
 # ── Executable ──────────────────────────────────────────────────────────────
-add_executable(west_engine main.cpp)
+add_executable(Bistro main.cpp)
 
-target_link_libraries(west_engine
+target_link_libraries(Bistro
     PRIVATE
-        west_engine_runtime
+        Engine
 )
 
 # Copy dependent runtime DLLs (vcpkg/system import DLLs) next to the exe.
 if(WIN32)
-    add_custom_command(TARGET west_engine POST_BUILD
+    add_custom_command(TARGET Bistro POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:west_engine>
-            $<TARGET_FILE_DIR:west_engine>
+            $<TARGET_RUNTIME_DLLS:Bistro>
+            $<TARGET_FILE_DIR:Bistro>
         COMMAND_EXPAND_LISTS
     )
 endif()
 
-west_set_compiler_options(west_engine)
+west_set_compiler_options(Bistro)
 
-# Set working directory for Visual Studio debugger
-set_target_properties(west_engine PROPERTIES
+# Set working directory for Visual Studio debugger. Keep the binary name stable
+# for existing smoke-test scripts while exposing the demo as Bistro in VS.
+set_target_properties(Bistro PROPERTIES
+    OUTPUT_NAME west_engine
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Bistro)

@@ -7,6 +7,7 @@
 #include "core/Assert.h"
 #include "core/Logger.h"
 #include "scene/MeshLoader.h"
+#include "scene/SceneMath.h"
 
 #include <algorithm>
 #include <array>
@@ -94,24 +95,6 @@ struct MergeKeyHasher
     };
 }
 
-[[nodiscard]] std::array<float, 16> Multiply(const std::array<float, 16>& lhs, const std::array<float, 16>& rhs)
-{
-    std::array<float, 16> result{};
-    for (int row = 0; row < 4; ++row)
-    {
-        for (int column = 0; column < 4; ++column)
-        {
-            float sum = 0.0f;
-            for (int k = 0; k < 4; ++k)
-            {
-                sum += lhs[row * 4 + k] * rhs[k * 4 + column];
-            }
-            result[row * 4 + column] = sum;
-        }
-    }
-    return result;
-}
-
 [[nodiscard]] std::array<float, 16> UniformScale(float scale)
 {
     return {
@@ -124,15 +107,6 @@ struct MergeKeyHasher
     return {
         matrix.a1, matrix.a2, matrix.a3, matrix.a4, matrix.b1, matrix.b2, matrix.b3, matrix.b4,
         matrix.c1, matrix.c2, matrix.c3, matrix.c4, matrix.d1, matrix.d2, matrix.d3, matrix.d4,
-    };
-}
-
-[[nodiscard]] std::array<float, 3> TransformPoint(const std::array<float, 16>& matrix, const float position[3])
-{
-    return {
-        (position[0] * matrix[0]) + (position[1] * matrix[4]) + (position[2] * matrix[8]) + matrix[12],
-        (position[0] * matrix[1]) + (position[1] * matrix[5]) + (position[2] * matrix[9]) + matrix[13],
-        (position[0] * matrix[2]) + (position[1] * matrix[6]) + (position[2] * matrix[10]) + matrix[14],
     };
 }
 
@@ -643,8 +617,7 @@ bool TryReadSceneCache(const std::filesystem::path& cachePath, const std::filesy
     return true;
 }
 
-[[nodiscard]] uint32_t ResolveTextureIndex(const std::filesystem::path& sceneSourceFile,
-                                           std::string_view texturePath,
+[[nodiscard]] uint32_t ResolveTextureIndex(const std::filesystem::path& sceneSourceFile, std::string_view texturePath,
                                            std::unordered_map<std::string, uint32_t>& textureIndices, SceneAsset& asset)
 {
     if (texturePath.empty())
@@ -668,7 +641,8 @@ bool TryReadSceneCache(const std::filesystem::path& cachePath, const std::filesy
     return textureIndex;
 }
 
-[[nodiscard]] uint32_t ResolveBaseColorTextureIndex(const std::filesystem::path& sceneSourceFile, const aiMaterial* material,
+[[nodiscard]] uint32_t ResolveBaseColorTextureIndex(const std::filesystem::path& sceneSourceFile,
+                                                    const aiMaterial* material,
                                                     std::unordered_map<std::string, uint32_t>& textureIndices,
                                                     SceneAsset& asset)
 {
@@ -691,7 +665,8 @@ bool TryReadSceneCache(const std::filesystem::path& cachePath, const std::filesy
     return ResolveTextureIndex(sceneSourceFile, texturePath.C_Str(), textureIndices, asset);
 }
 
-[[nodiscard]] uint32_t ResolveOpacityTextureIndex(const std::filesystem::path& sceneSourceFile, const aiMaterial* material,
+[[nodiscard]] uint32_t ResolveOpacityTextureIndex(const std::filesystem::path& sceneSourceFile,
+                                                  const aiMaterial* material,
                                                   std::unordered_map<std::string, uint32_t>& textureIndices,
                                                   SceneAsset& asset)
 {
@@ -832,7 +807,7 @@ void AddNodeInstances(const aiNode* node, const aiMatrix4x4& parentTransform, co
                       SceneAsset& asset)
 {
     const aiMatrix4x4 worldTransform = parentTransform * node->mTransformation;
-    const std::array<float, 16> rowMajorTransform = Multiply(ToRowMajorArray(worldTransform), sceneScale);
+    const std::array<float, 16> rowMajorTransform = MultiplyMatrix4x4(ToRowMajorArray(worldTransform), sceneScale);
 
     for (uint32_t meshSlot = 0; meshSlot < node->mNumMeshes; ++meshSlot)
     {
@@ -859,7 +834,7 @@ void ComputeBounds(SceneAsset& asset)
         const MeshData& mesh = asset.GetMeshes()[instance.meshIndex];
         for (const MeshVertex& vertex : mesh.vertices)
         {
-            const std::array<float, 3> transformed = TransformPoint(instance.modelMatrix, vertex.position);
+            const std::array<float, 3> transformed = TransformPointAffine(instance.modelMatrix, vertex.position);
             boundsMin[0] = std::min(boundsMin[0], transformed[0]);
             boundsMin[1] = std::min(boundsMin[1], transformed[1]);
             boundsMin[2] = std::min(boundsMin[2], transformed[2]);

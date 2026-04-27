@@ -208,7 +208,6 @@ void ShadowMapPass::CreatePipeline()
     pipelineDesc.vertexAttributes = vertexAttributes;
     pipelineDesc.vertexStride = 32;
     pipelineDesc.topology = rhi::RHIPrimitiveTopology::TriangleList;
-    // Match the main deferred scene path and HonglabVulkan's Bistro baseline: avoid dropping
     // floor/ground triangles whose winding is inconsistent in the source OBJ content.
     pipelineDesc.cullMode = rhi::RHICullMode::None;
     pipelineDesc.depthTest = true;

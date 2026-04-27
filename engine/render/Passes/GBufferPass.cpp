@@ -340,7 +340,6 @@ void GBufferPass::CreatePipeline()
     pipelineDesc.vertexStride = 32;
     pipelineDesc.topology = rhi::RHIPrimitiveTopology::TriangleList;
     // Bistro's OBJ content contains winding that is not robust enough for strict back-face culling.
-    // HonglabVulkan's deferred path keeps culling disabled for this asset class, so keep parity here.
     pipelineDesc.cullMode = rhi::RHICullMode::None;
     pipelineDesc.depthTest = true;
     pipelineDesc.depthWrite = true;

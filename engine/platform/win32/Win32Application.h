@@ -5,14 +5,15 @@
 #pragma once
 
 #include "core/Timer.h"
+#include "editor/RuntimeRenderSettings.h"
 #include "platform/IApplication.h"
 #include "platform/win32/Win32Window.h"
 #include "render/Passes/BokehDOFPass.h"
 #include "render/Passes/ToneMappingPass.h"
 #include "render/RenderGraph/RenderGraphResource.h"
 #include "rhi/interface/RHIEnums.h"
+#include "scene/FreeLookCameraController.h"
 
-#include <array>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -69,6 +70,7 @@ class Win32Application final : public IApplication
 {
 public:
     Win32Application() = default;
+    explicit Win32Application(const ApplicationDesc& desc);
     ~Win32Application() override;
 
     // ── IApplication interface ─────────────────────────────────────────
@@ -138,8 +140,8 @@ private:
     bool m_enableTextureBatchUpload = true;
     uint32 m_sceneTextureMaxDimension = 1024;
     bool m_enableGPUDrivenScene = true;
-    bool m_useCanonicalGltfScene = false;
     std::string m_baseWindowTitle = "WestEngine";
+    ApplicationSceneDesc m_sceneDesc;
 
     // ── RHI ───────────────────────────────────────────────────────────
     rhi::RHIBackend m_backend = rhi::RHIBackend::DX12;
@@ -205,46 +207,11 @@ private:
     uint32 m_lastLoggedVisibleCount = UINT32_MAX;
     bool m_gpuDrivenAvailable = false;
     bool m_gpuDrivenVisibilityLogged = false;
-    std::array<float, 3> m_freeLookPosition = {0.0f, 0.0f, 0.0f};
-    float m_freeLookYawRadians = 0.0f;
-    float m_freeLookPitchRadians = 0.0f;
+    scene::FreeLookCameraController m_freeLookCamera;
     bool m_hasLastMousePosition = false;
-    bool m_runtimeTexturesEnabled = true;
-    bool m_runtimeShadowsEnabled = true;
-    bool m_runtimeSSAOEnabled = true;
-    bool m_runtimeIBLEnabled = true;
-    bool m_runtimeAlphaDiscardEnabled = true;
-    bool m_runtimeBokehEnabled = false;
-    bool m_imguiVisible = true;
-    bool m_imguiCaptureInput = true;
-    bool m_imguiWantsMouseCapture = false;
-    bool m_imguiWantsKeyboardCapture = false;
     long m_lastMouseX = 0;
     long m_lastMouseY = 0;
-    float m_runtimeLightIntensity = 5.2f;
-    float m_runtimeLightElevationDegrees = 67.5f;
-    float m_runtimeLightAzimuthDegrees = 35.5f;
-    float m_runtimeEnvironmentIntensity = 1.0f;
-    float m_runtimeDiffuseWeight = 1.0f;
-    float m_runtimeSpecularWeight = 1.0f;
-    float m_runtimeMetallicScale = 1.0f;
-    float m_runtimeRoughnessScale = 1.0f;
-    float m_runtimeSSAORadius = 0.10f;
-    float m_runtimeSSAOBias = 0.025f;
-    int m_runtimeSSAOSampleCount = 16;
-    float m_runtimeSSAOPower = 2.0f;
-    float m_runtimeShadowBias = 0.0012f;
-    float m_runtimeShadowNormalBias = 0.0125f;
-    float m_runtimeCameraMoveSpeed = 12.0f;
-    float m_runtimeCameraMouseSensitivity = 0.0035f;
-    float m_runtimeCameraFovDegrees = 60.0f;
-    float m_runtimeCameraNearPlane = 0.1f;
-    float m_runtimeCameraFarPlane = 500.0f;
-    uint32 m_runtimePostPresetIndex = 0;
-    bool m_runtimePostPresetDirty = false;
-    std::array<bool, 256> m_runtimeKeyState{};
-    render::ToneMappingPass::PostSettings m_runtimePostSettings{};
-    render::BokehDOFPass::Settings m_runtimeBokehSettings{};
+    editor::RuntimeRenderSettings m_runtimeSettings;
     render::TextureHandle m_frameBackBufferHandle{};
     render::TextureHandle m_frameShadowMapHandle{};
     render::TextureHandle m_frameGBufferPositionHandle{};

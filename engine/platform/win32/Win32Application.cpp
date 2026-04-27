@@ -10,8 +10,11 @@
 #include "core/Threading/TaskSystem.h"
 #include "editor/ImGuiPass.h"
 #include "editor/ImGuiRenderer.h"
+#include "editor/PostProcessingPresets.h"
 #include "editor/Profiler/FrameTelemetry.h"
 #include "editor/Profiler/GPUTimerManager.h"
+#include "editor/RuntimeControlPanel.h"
+#include "editor/TelemetryOverlay.h"
 #include "platform/win32/Win32Headers.h"
 #include "render/Passes/BokehDOFPass.h"
 #include "render/Passes/BufferCopyPass.h"
@@ -41,21 +44,23 @@
 #include "scene/ImageData.h"
 #include "scene/SceneAsset.h"
 #include "scene/SceneAssetLoader.h"
+#include "scene/SceneMath.h"
 #include "scene/TextureAssetData.h"
 #include "shader/PSOCache.h"
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cfloat>
 #include <charconv>
 #include <chrono>
 #include <cmath>
-#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <format>
 #include <imgui.h>
 #include <numbers>
+#include <span>
 #include <string_view>
 #include <system_error>
 #include <thread>
@@ -76,118 +81,6 @@ const char* OnOff(bool value)
     return value ? "on" : "off";
 }
 
-const char* QueueTypeName(rhi::RHIQueueType queueType)
-{
-    switch (queueType)
-    {
-    case rhi::RHIQueueType::Graphics:
-        return "Graphics";
-    case rhi::RHIQueueType::Compute:
-        return "Compute";
-    case rhi::RHIQueueType::Copy:
-        return "Copy";
-    default:
-        return "Unknown";
-    }
-}
-
-const char* ResourceKindName(render::ResourceKind kind)
-{
-    return kind == render::ResourceKind::Texture ? "Texture" : "Buffer";
-}
-
-std::string FormatBytes(uint64 bytes)
-{
-    constexpr double kKiB = 1024.0;
-    constexpr double kMiB = kKiB * 1024.0;
-    constexpr double kGiB = kMiB * 1024.0;
-    const double value = static_cast<double>(bytes);
-
-    if (value >= kGiB)
-    {
-        return std::format("{:.2f} GB", value / kGiB);
-    }
-    if (value >= kMiB)
-    {
-        return std::format("{:.2f} MB", value / kMiB);
-    }
-    if (value >= kKiB)
-    {
-        return std::format("{:.2f} KB", value / kKiB);
-    }
-    return std::format("{} B", bytes);
-}
-
-const char* ToneMappingOperatorName(render::ToneMappingPass::ToneMappingOperator value)
-{
-    using ToneMappingOperator = render::ToneMappingPass::ToneMappingOperator;
-    switch (value)
-    {
-    case ToneMappingOperator::None:
-        return "None";
-    case ToneMappingOperator::Reinhard:
-        return "Reinhard";
-    case ToneMappingOperator::ACES:
-        return "ACES";
-    case ToneMappingOperator::Uncharted2:
-        return "Uncharted2";
-    case ToneMappingOperator::GranTurismo:
-        return "GranTurismo";
-    case ToneMappingOperator::Lottes:
-        return "Lottes";
-    case ToneMappingOperator::Exponential:
-        return "Exponential";
-    case ToneMappingOperator::ReinhardExtended:
-        return "ReinhardExt";
-    case ToneMappingOperator::Luminance:
-        return "Luminance";
-    case ToneMappingOperator::Hable:
-        return "Hable";
-    default:
-        return "Unknown";
-    }
-}
-
-const char* PostDebugViewName(render::ToneMappingPass::DebugView value)
-{
-    using DebugView = render::ToneMappingPass::DebugView;
-    switch (value)
-    {
-    case DebugView::Off:
-        return "Off";
-    case DebugView::ToneMappingSplit:
-        return "ToneSplit";
-    case DebugView::ColorChannels:
-        return "Channels";
-    case DebugView::PostSplit:
-        return "PostSplit";
-    default:
-        return "Unknown";
-    }
-}
-
-const char* PostDebugChannelName(render::ToneMappingPass::DebugChannel value)
-{
-    using DebugChannel = render::ToneMappingPass::DebugChannel;
-    switch (value)
-    {
-    case DebugChannel::All:
-        return "All";
-    case DebugChannel::Red:
-        return "Red";
-    case DebugChannel::Green:
-        return "Green";
-    case DebugChannel::Blue:
-        return "Blue";
-    case DebugChannel::Alpha:
-        return "Alpha";
-    case DebugChannel::Luminance:
-        return "Luminance";
-    default:
-        return "Unknown";
-    }
-}
-
 const char* BuildConfigName()
 {
 #if WEST_DEBUG
@@ -197,152 +90,15 @@ const char* BuildConfigName()
 #endif
 }
 
-struct PostPresetDefinition
-{
-    const char* name = "Portfolio Default";
-    render::ToneMappingPass::PostSettings toneMapping{};
-    render::BokehDOFPass::Settings bokeh{};
-    bool enableBokeh = false;
-};
-
-[[nodiscard]] std::array<PostPresetDefinition, 8> BuildPostPresets()
-{
-    using ToneMappingOperator = render::ToneMappingPass::ToneMappingOperator;
-
-    std::array<PostPresetDefinition, 8> presets{};
-
-    presets[0].name = "Portfolio Default";
-
-    presets[1].name = "Neutral ACES";
-    presets[1].toneMapping.contrast = 1.0f;
-    presets[1].toneMapping.saturation = 1.0f;
-    presets[1].toneMapping.vibrance = 0.0f;
-    presets[1].toneMapping.vignetteStrength = 0.0f;
-    presets[1].toneMapping.filmGrainStrength = 0.0f;
-    presets[1].toneMapping.chromaticAberration = 0.0f;
-    presets[1].bokeh.intensity = 0.0f;
-    presets[1].enableBokeh = false;
-
-    presets[2].name = "Cinematic U2";
-    presets[2].toneMapping.toneMappingOperator = ToneMappingOperator::Uncharted2;
-    presets[2].toneMapping.exposure = 1.05f;
-    presets[2].toneMapping.contrast = 1.08f;
-    presets[2].toneMapping.saturation = 0.95f;
-    presets[2].toneMapping.vibrance = 0.02f;
-    presets[2].toneMapping.vignetteStrength = 0.20f;
-    presets[2].toneMapping.vignetteRadius = 0.78f;
-    presets[2].toneMapping.filmGrainStrength = 0.010f;
-    presets[2].toneMapping.chromaticAberration = 0.10f;
-    presets[2].bokeh.focusRangeScale = 0.12f;
-    presets[2].bokeh.maxBlurRadius = 7.0f;
-    presets[2].bokeh.intensity = 0.0f;
-    presets[2].bokeh.highlightBoost = 1.35f;
-    presets[2].bokeh.foregroundBias = 0.45f;
-    presets[2].enableBokeh = false;
-
-    presets[3].name = "Vibrant GT";
-    presets[3].toneMapping.toneMappingOperator = ToneMappingOperator::GranTurismo;
-    presets[3].toneMapping.exposure = 1.02f;
-    presets[3].toneMapping.contrast = 1.06f;
-    presets[3].toneMapping.saturation = 1.12f;
-    presets[3].toneMapping.vibrance = 0.18f;
-    presets[3].toneMapping.vignetteStrength = 0.08f;
-    presets[3].toneMapping.vignetteRadius = 0.84f;
-    presets[3].toneMapping.filmGrainStrength = 0.0f;
-    presets[3].toneMapping.chromaticAberration = 0.04f;
-    presets[3].bokeh.focusRangeScale = 0.16f;
-    presets[3].bokeh.maxBlurRadius = 5.0f;
-    presets[3].bokeh.intensity = 0.0f;
-    presets[3].bokeh.highlightBoost = 1.10f;
-    presets[3].bokeh.foregroundBias = 0.30f;
-    presets[3].enableBokeh = false;
-
-    presets[4].name = "Clean";
-    presets[4].toneMapping.exposure = 1.0f;
-    presets[4].toneMapping.contrast = 1.0f;
-    presets[4].toneMapping.saturation = 1.0f;
-    presets[4].toneMapping.vibrance = 0.0f;
-    presets[4].toneMapping.vignetteStrength = 0.0f;
-    presets[4].toneMapping.filmGrainStrength = 0.0f;
-    presets[4].toneMapping.chromaticAberration = 0.0f;
-    presets[4].bokeh.intensity = 0.0f;
-    presets[4].enableBokeh = false;
-
-    presets[5].name = "Hable Film";
-    presets[5].toneMapping.toneMappingOperator = ToneMappingOperator::Hable;
-    presets[5].toneMapping.exposure = 1.08f;
-    presets[5].toneMapping.contrast = 1.04f;
-    presets[5].toneMapping.saturation = 0.98f;
-    presets[5].toneMapping.vibrance = 0.03f;
-    presets[5].toneMapping.vignetteStrength = 0.14f;
-    presets[5].toneMapping.vignetteRadius = 0.80f;
-    presets[5].toneMapping.filmGrainStrength = 0.012f;
-    presets[5].toneMapping.chromaticAberration = 0.06f;
-    presets[5].bokeh.focusRangeScale = 0.15f;
-    presets[5].bokeh.maxBlurRadius = 6.0f;
-    presets[5].bokeh.intensity = 0.0f;
-    presets[5].bokeh.highlightBoost = 1.20f;
-    presets[5].bokeh.foregroundBias = 0.38f;
-    presets[5].enableBokeh = false;
-
-    presets[6].name = "Reinhard Ext";
-    presets[6].toneMapping.toneMappingOperator = ToneMappingOperator::ReinhardExtended;
-    presets[6].toneMapping.exposure = 1.00f;
-    presets[6].toneMapping.maxWhite = 5.5f;
-    presets[6].toneMapping.contrast = 1.02f;
-    presets[6].toneMapping.saturation = 1.00f;
-    presets[6].toneMapping.vibrance = 0.04f;
-    presets[6].toneMapping.vignetteStrength = 0.06f;
-    presets[6].toneMapping.vignetteRadius = 0.86f;
-    presets[6].toneMapping.filmGrainStrength = 0.0f;
-    presets[6].toneMapping.chromaticAberration = 0.0f;
-    presets[6].bokeh.intensity = 0.0f;
-    presets[6].enableBokeh = false;
-
-    presets[7].name = "Lottes Crisp";
-    presets[7].toneMapping.toneMappingOperator = ToneMappingOperator::Lottes;
-    presets[7].toneMapping.exposure = 0.96f;
-    presets[7].toneMapping.contrast = 1.05f;
-    presets[7].toneMapping.saturation = 1.02f;
-    presets[7].toneMapping.vibrance = 0.06f;
-    presets[7].toneMapping.vignetteStrength = 0.04f;
-    presets[7].toneMapping.vignetteRadius = 0.88f;
-    presets[7].toneMapping.filmGrainStrength = 0.0f;
-    presets[7].toneMapping.chromaticAberration = 0.02f;
-    presets[7].bokeh.intensity = 0.0f;
-    presets[7].enableBokeh = false;
-
-    return presets;
-}
-
-const std::array<PostPresetDefinition, 8> kPostPresets = BuildPostPresets();
-
-[[nodiscard]] const PostPresetDefinition& GetPostPreset(uint32_t presetIndex)
-{
-    return kPostPresets[std::min<size_t>(presetIndex, kPostPresets.size() - 1)];
-}
-
-std::string RuntimePostPresetLabel(uint32 presetIndex, bool dirty)
-{
-    const char* name = GetPostPreset(presetIndex).name;
-    return dirty ? std::format("{}*", name) : std::string(name);
-}
-
 [[nodiscard]] bool ContainsCaseInsensitive(std::string_view text, std::string_view needle)
 {
-    auto toLower = [](char value)
-    {
-        return static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
-    };
+    auto toLower = [](char value) { return static_cast<char>(std::tolower(static_cast<unsigned char>(value))); };
 
     return std::search(text.begin(), text.end(), needle.begin(), needle.end(),
-                       [&](char lhs, char rhs)
-                       {
-                           return toLower(lhs) == toLower(rhs);
-                       }) != text.end();
+                       [&](char lhs, char rhs) { return toLower(lhs) == toLower(rhs); }) != text.end();
 }
 
-[[nodiscard]] bool IsHongLabBistroMetalMaterial(std::string_view materialName)
+[[nodiscard]] bool IsBistroMetalMaterial(std::string_view materialName)
 {
     return ContainsCaseInsensitive(materialName, "metal");
 }
@@ -428,40 +184,6 @@ static_assert(sizeof(GPUFrameConstants) == 432);
 static_assert(sizeof(GPUDescriptorHandle) == 8);
 static_assert(sizeof(GPUMaterialData) == 64);
 
-[[nodiscard]] float Length3(const std::array<float, 3>& value)
-{
-    return std::sqrt((value[0] * value[0]) + (value[1] * value[1]) + (value[2] * value[2]));
-}
-
-[[nodiscard]] float Dot3(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs)
-{
-    return (lhs[0] * rhs[0]) + (lhs[1] * rhs[1]) + (lhs[2] * rhs[2]);
-}
-
-[[nodiscard]] std::array<float, 3> Cross3(const std::array<float, 3>& lhs, const std::array<float, 3>& rhs)
-{
-    return {
-        (lhs[1] * rhs[2]) - (lhs[2] * rhs[1]),
-        (lhs[2] * rhs[0]) - (lhs[0] * rhs[2]),
-        (lhs[0] * rhs[1]) - (lhs[1] * rhs[0]),
-    };
-}
-
-[[nodiscard]] std::array<float, 3> Normalize3(const std::array<float, 3>& value)
-{
-    const float length = Length3(value);
-    if (length <= 0.0001f)
-    {
-        return {0.0f, 0.0f, 1.0f};
-    }
-
-    return {
-        value[0] / length,
-        value[1] / length,
-        value[2] / length,
-    };
-}
-
 [[nodiscard]] float DegreesToRadians(float degrees)
 {
     return degrees * (std::numbers::pi_v<float> / 180.0f);
@@ -478,7 +200,7 @@ static_assert(sizeof(GPUMaterialData) == 64);
     const float elevationRadians = DegreesToRadians(elevationDegrees);
     const float horizontalScale = std::cos(elevationRadians);
 
-    return Normalize3({
+    return scene::Normalize3({
         horizontalScale * std::cos(azimuthRadians),
         -std::sin(elevationRadians),
         horizontalScale * std::sin(azimuthRadians),
@@ -495,69 +217,6 @@ static_assert(sizeof(GPUMaterialData) == 64);
 {
     WEST_ASSERT(alignment > 0);
     return (value + alignment - 1ull) & ~(alignment - 1ull);
-}
-
-[[nodiscard]] std::array<float, 3> MakeForwardVector(float yawRadians, float pitchRadians)
-{
-    const float cosPitch = std::cos(pitchRadians);
-    return Normalize3({
-        cosPitch * std::cos(yawRadians),
-        std::sin(pitchRadians),
-        cosPitch * std::sin(yawRadians),
-    });
-}
-
-[[nodiscard]] std::array<float, 3> MakeFlatForwardVector(float yawRadians)
-{
-    return Normalize3({
-        std::cos(yawRadians),
-        0.0f,
-        std::sin(yawRadians),
-    });
-}
-
-[[nodiscard]] std::array<float, 3> MakeRightVector(float yawRadians)
-{
-    return Normalize3({
-        -std::sin(yawRadians),
-        0.0f,
-        std::cos(yawRadians),
-    });
-}
-
-[[nodiscard]] std::array<float, 16> MultiplyMatrix(const std::array<float, 16>& lhs, const std::array<float, 16>& rhs)
-{
-    std::array<float, 16> result{};
-    for (int row = 0; row < 4; ++row)
-    {
-        for (int column = 0; column < 4; ++column)
-        {
-            float sum = 0.0f;
-            for (int k = 0; k < 4; ++k)
-            {
-                sum += lhs[row * 4 + k] * rhs[k * 4 + column];
-            }
-            result[row * 4 + column] = sum;
-        }
-    }
-    return result;
-}
-
-[[nodiscard]] std::array<float, 16> CreateLookAtRH(const std::array<float, 3>& eye, const std::array<float, 3>& target,
-                                                   const std::array<float, 3>& up)
-{
-    const std::array<float, 3> zAxis = Normalize3({
-        eye[0] - target[0],
-        eye[1] - target[1],
-        eye[2] - target[2],
-    });
-    const std::array<float, 3> xAxis = Normalize3(Cross3(up, zAxis));
-    const std::array<float, 3> yAxis = Cross3(zAxis, xAxis);
-
-    return {
-        xAxis[0], yAxis[0], zAxis[0], 0.0f, xAxis[1],          yAxis[1],          zAxis[1],          0.0f,
-        xAxis[2], yAxis[2], zAxis[2], 0.0f, -Dot3(xAxis, eye), -Dot3(yAxis, eye), -Dot3(zAxis, eye), 1.0f,
-    };
 }
 
 [[nodiscard]] std::array<float, 16> CreateOrthographicOffCenterRH(float left, float right, float bottom, float top,
@@ -592,30 +251,6 @@ struct Bounds3
     std::array<float, 3> min = {FLT_MAX, FLT_MAX, FLT_MAX};
     std::array<float, 3> max = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
 };
-
-[[nodiscard]] std::array<float, 3> TransformPoint(const std::array<float, 16>& matrix,
-                                                  const std::array<float, 3>& point)
-{
-    const float x = point[0];
-    const float y = point[1];
-    const float z = point[2];
-
-    const float transformedX = (x * matrix[0]) + (y * matrix[4]) + (z * matrix[8]) + matrix[12];
-    const float transformedY = (x * matrix[1]) + (y * matrix[5]) + (z * matrix[9]) + matrix[13];
-    const float transformedZ = (x * matrix[2]) + (y * matrix[6]) + (z * matrix[10]) + matrix[14];
-    const float transformedW = (x * matrix[3]) + (y * matrix[7]) + (z * matrix[11]) + matrix[15];
-
-    if (std::abs(transformedW) > 0.0001f)
-    {
-        return {
-            transformedX / transformedW,
-            transformedY / transformedW,
-            transformedZ / transformedW,
-        };
-    }
-
-    return {transformedX, transformedY, transformedZ};
-}
 
 [[nodiscard]] Bounds3 ComputeMeshBounds(const scene::MeshData& mesh)
 {
@@ -657,7 +292,7 @@ struct Bounds3
     Bounds3 worldBounds{};
     for (const std::array<float, 3>& corner : corners)
     {
-        const std::array<float, 3> transformed = TransformPoint(modelMatrix, corner);
+        const std::array<float, 3> transformed = scene::TransformPointHomogeneous(modelMatrix, corner);
         worldBounds.min[0] = std::min(worldBounds.min[0], transformed[0]);
         worldBounds.min[1] = std::min(worldBounds.min[1], transformed[1]);
         worldBounds.min[2] = std::min(worldBounds.min[2], transformed[2]);
@@ -682,7 +317,7 @@ struct Bounds3
         (worldBounds.max[2] - worldBounds.min[2]) * 0.5f,
     };
 
-    return {center[0], center[1], center[2], Length3(extents)};
+    return {center[0], center[1], center[2], scene::Length3(extents)};
 }
 
 [[nodiscard]] std::filesystem::path FindAmazonLumberyardBistroRoot()
@@ -713,9 +348,19 @@ struct Bounds3
     return std::filesystem::path("assets/models/AmazonLumberyardBistro");
 }
 
-[[nodiscard]] const char* ScenePresetName(bool useCanonicalGltfScene)
+[[nodiscard]] std::string SceneDisplayName(const ApplicationSceneDesc& sceneDesc)
 {
-    return useCanonicalGltfScene ? "canonical-gltf" : "bistro";
+    if (!sceneDesc.name.empty())
+    {
+        return sceneDesc.name;
+    }
+
+    if (!sceneDesc.path.empty())
+    {
+        return sceneDesc.path.stem().string();
+    }
+
+    return sceneDesc.kind == ApplicationSceneKind::Bistro ? "bistro" : "static-scene";
 }
 
 [[nodiscard]] std::filesystem::path FindCanonicalStaticScenePath()
@@ -745,6 +390,39 @@ struct Bounds3
     }
 
     return std::filesystem::path("assets/models/CanonicalStaticScene/CanonicalStaticScene.gltf");
+}
+
+[[nodiscard]] std::filesystem::path ResolveScenePath(const std::filesystem::path& scenePath)
+{
+    if (scenePath.empty() || scenePath.is_absolute())
+    {
+        return scenePath;
+    }
+
+    std::error_code errorCode;
+    std::filesystem::path probe = std::filesystem::current_path(errorCode);
+    if (errorCode)
+    {
+        return scenePath;
+    }
+
+    for (;;)
+    {
+        const std::filesystem::path candidate = probe / scenePath;
+        if (std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+
+        const std::filesystem::path parent = probe.parent_path();
+        if (parent.empty() || parent == probe)
+        {
+            break;
+        }
+        probe = parent;
+    }
+
+    return scenePath;
 }
 
 [[nodiscard]] std::filesystem::path FindGoldenGateHillsRoot()
@@ -802,8 +480,7 @@ struct UploadedTextureResult
     const uint32_t bytesPerBlock = rhi::GetFormatByteSize(format);
     const uint32_t blockWidth = rhi::GetFormatBlockWidth(format);
     WEST_CHECK(bytesPerBlock > 0, "Unsupported texture upload format");
-    WEST_CHECK((rowPitchBytes % bytesPerBlock) == 0,
-               "Texture upload row pitch must be block-size aligned");
+    WEST_CHECK((rowPitchBytes % bytesPerBlock) == 0, "Texture upload row pitch must be block-size aligned");
     return (rowPitchBytes / bytesPerBlock) * blockWidth;
 }
 
@@ -825,9 +502,8 @@ struct UploadedTextureResult
         staged.source = &subresource;
         staged.alignedRowPitchBytes = AlignUp(subresource.rowPitchBytes, 256u);
         staged.stagingOffsetBytes = AlignUp(totalStagingBytes, 512ull);
-        staged.stagingBytes =
-            static_cast<uint64_t>(staged.alignedRowPitchBytes) *
-            GetTextureUploadRowCount(asset.format, subresource.height) * subresource.depth;
+        staged.stagingBytes = static_cast<uint64_t>(staged.alignedRowPitchBytes) *
+                              GetTextureUploadRowCount(asset.format, subresource.height) * subresource.depth;
         totalStagingBytes = staged.stagingOffsetBytes + staged.stagingBytes;
         stagedSubresources.push_back(staged);
     }
@@ -921,6 +597,10 @@ struct UploadedTextureResult
 }
 
 } // namespace
+
+Win32Application::Win32Application(const ApplicationDesc& desc) : m_baseWindowTitle(desc.windowTitle), m_sceneDesc(desc.scene)
+{
+}
 
 Win32Application::~Win32Application() = default;
 
@@ -1025,15 +705,48 @@ bool Win32Application::Initialize()
             const std::string_view sceneName = arg.substr(kScenePrefix.size());
             if (sceneName == "bistro")
             {
-                m_useCanonicalGltfScene = false;
+                m_sceneDesc = ApplicationSceneDesc{};
             }
             else if (sceneName == "canonical" || sceneName == "canonical-gltf")
             {
-                m_useCanonicalGltfScene = true;
+                m_sceneDesc.kind = ApplicationSceneKind::StaticScene;
+                m_sceneDesc.path = FindCanonicalStaticScenePath();
+                m_sceneDesc.name = "canonical-gltf";
+                m_sceneDesc.uniformScale = 1.0f;
             }
             else
             {
                 WEST_LOG_WARNING(LogCategory::Core, "Ignoring unknown scene preset argument: {}", arg);
+            }
+        }
+
+        static constexpr std::string_view kModelPrefix = "--model=";
+        if (arg.starts_with(kModelPrefix))
+        {
+            const std::string_view modelText = arg.substr(kModelPrefix.size());
+            m_sceneDesc.kind = ApplicationSceneKind::StaticScene;
+            m_sceneDesc.path = std::filesystem::path(std::string(modelText));
+            m_sceneDesc.name = m_sceneDesc.path.stem().string();
+            m_sceneDesc.uniformScale = 1.0f;
+            WEST_LOG_INFO(LogCategory::Core, "Static scene model set to {}.", m_sceneDesc.path.string());
+        }
+
+        static constexpr std::string_view kSceneScalePrefix = "--scene-scale=";
+        if (arg.starts_with(kSceneScalePrefix))
+        {
+            const std::string_view scaleText = arg.substr(kSceneScalePrefix.size());
+            float parsedScale = 0.0f;
+            const char* begin = scaleText.data();
+            const char* end = begin + scaleText.size();
+            const auto [ptr, ec] = std::from_chars(begin, end, parsedScale);
+            if (ec == std::errc{} && ptr == end && parsedScale > 0.0f)
+            {
+                m_sceneDesc.uniformScale = parsedScale;
+                WEST_LOG_INFO(LogCategory::Core, "Scene scale set to {}.", m_sceneDesc.uniformScale);
+            }
+            else
+            {
+                WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid scene scale argument: {}", arg);
             }
         }
 
@@ -1048,9 +761,7 @@ bool Win32Application::Initialize()
             if (ec == std::errc{} && ptr == end)
             {
                 m_sceneTextureMaxDimension = parsedMaxDimension;
-                WEST_LOG_INFO(LogCategory::Core,
-                              "Scene texture max dimension set to {}.",
-                              m_sceneTextureMaxDimension);
+                WEST_LOG_INFO(LogCategory::Core, "Scene texture max dimension set to {}.", m_sceneTextureMaxDimension);
             }
             else
             {
@@ -1100,7 +811,7 @@ bool Win32Application::Initialize()
                             "textureCache={}, textureBatchUpload={}, textureMaxDimension={}, gpuDrivenScene={}",
                             BuildConfigName(), BackendName(m_backend), OnOff(m_enableValidation),
                             OnOff(m_enableDX12GPUBasedValidation), OnOff(m_enableGPUCrashDiag), m_maxFrameCount,
-                            ScenePresetName(m_useCanonicalGltfScene), OnOff(m_enableSceneCache),
+                            SceneDisplayName(m_sceneDesc), OnOff(m_enableSceneCache),
                             OnOff(m_enableSceneMerge), OnOff(m_enableSceneBatchUpload), OnOff(m_enableTextureCache),
                             OnOff(m_enableTextureBatchUpload), m_sceneTextureMaxDimension,
                             OnOff(m_enableGPUDrivenScene)));
@@ -1498,23 +1209,24 @@ void Win32Application::InitializeScene()
 
     const auto sceneInitStart = Clock::now();
     scene::SceneLoadOptions loadOptions{};
-    loadOptions.uniformScale = m_useCanonicalGltfScene ? 1.0f : 0.01f;
+    loadOptions.uniformScale = m_sceneDesc.uniformScale;
     loadOptions.enableCache = m_enableSceneCache;
     loadOptions.enableStaticMeshMerge = m_enableSceneMerge;
 
-    if (m_useCanonicalGltfScene)
+    if (m_sceneDesc.kind == ApplicationSceneKind::StaticScene)
     {
-        const std::filesystem::path scenePath = FindCanonicalStaticScenePath();
+        const std::filesystem::path scenePath = ResolveScenePath(m_sceneDesc.path);
         Logger::Log(LogLevel::Info, LogCategory::Scene,
-                    std::format("Loading scene preset {} from {}", ScenePresetName(true), scenePath.string()));
+                    std::format("Loading scene {} from {}", SceneDisplayName(m_sceneDesc), scenePath.string()));
         m_sceneAsset =
             std::make_unique<scene::SceneAsset>(scene::SceneAssetLoader::LoadStaticScene(scenePath, loadOptions));
     }
     else
     {
-        const std::filesystem::path bistroRoot = FindAmazonLumberyardBistroRoot();
+        const std::filesystem::path bistroRoot =
+            m_sceneDesc.path.empty() ? FindAmazonLumberyardBistroRoot() : ResolveScenePath(m_sceneDesc.path);
         Logger::Log(LogLevel::Info, LogCategory::Scene,
-                    std::format("Loading scene preset {} from {}", ScenePresetName(false), bistroRoot.string()));
+                    std::format("Loading scene {} from {}", SceneDisplayName(m_sceneDesc), bistroRoot.string()));
         m_sceneAsset = std::make_unique<scene::SceneAsset>(
             scene::SceneAssetLoader::LoadAmazonLumberyardBistro(bistroRoot, loadOptions));
     }
@@ -1810,10 +1522,8 @@ void Win32Application::InitializeScene()
         textureLoadOptions.enableCache = m_enableTextureCache;
         textureLoadOptions.generateMipChain = true;
         textureLoadOptions.maxDimension = m_sceneTextureMaxDimension;
-        if (auto loadedAsset = scene::LoadTexture2DAssetRGBA8WithStats(textureAsset.sourcePath,
-                                                                       textureAsset.debugName,
-                                                                       true,
-                                                                       textureLoadOptions);
+        if (auto loadedAsset = scene::LoadTexture2DAssetRGBA8WithStats(textureAsset.sourcePath, textureAsset.debugName,
+                                                                       true, textureLoadOptions);
             loadedAsset.has_value())
         {
             loadedTexture.textureData = std::move(loadedAsset->texture);
@@ -1865,8 +1575,7 @@ void Win32Application::InitializeScene()
         if (m_enableTextureBatchUpload)
         {
             loadedTexture.stagingBytes = 0;
-            for (const LoadedSceneTexture::StagedSubresource& stagedSubresource :
-                 loadedTexture.stagedSubresources)
+            for (const LoadedSceneTexture::StagedSubresource& stagedSubresource : loadedTexture.stagedSubresources)
             {
                 loadedTexture.stagingBytes += stagedSubresource.stagingBytes;
             }
@@ -1905,16 +1614,14 @@ void Win32Application::InitializeScene()
             {
                 const scene::TextureSubresourceData& subresource =
                     loadedTexture.textureData.subresources[stagedSubresource.subresourceIndex];
-                const uint32_t rowCount = GetTextureUploadRowCount(loadedTexture.textureData.format,
-                                                                   subresource.height);
+                const uint32_t rowCount =
+                    GetTextureUploadRowCount(loadedTexture.textureData.format, subresource.height);
                 for (uint32_t row = 0; row < rowCount; ++row)
                 {
-                    const uint8_t* sourceRow = loadedTexture.textureData.bytes.data() +
-                                               subresource.sourceOffsetBytes +
+                    const uint8_t* sourceRow = loadedTexture.textureData.bytes.data() + subresource.sourceOffsetBytes +
                                                (static_cast<size_t>(row) * subresource.rowPitchBytes);
-                    uint8_t* destinationRow =
-                        mappedTexture + stagedSubresource.stagingOffsetBytes +
-                        (static_cast<size_t>(row) * stagedSubresource.alignedRowPitchBytes);
+                    uint8_t* destinationRow = mappedTexture + stagedSubresource.stagingOffsetBytes +
+                                              (static_cast<size_t>(row) * stagedSubresource.alignedRowPitchBytes);
                     std::memcpy(destinationRow, sourceRow, subresource.rowPitchBytes);
                 }
             }
@@ -2001,16 +1708,14 @@ void Win32Application::InitializeScene()
             {
                 const scene::TextureSubresourceData& subresource =
                     loadedTexture.textureData.subresources[stagedSubresource.subresourceIndex];
-                const uint32_t rowCount = GetTextureUploadRowCount(loadedTexture.textureData.format,
-                                                                   subresource.height);
+                const uint32_t rowCount =
+                    GetTextureUploadRowCount(loadedTexture.textureData.format, subresource.height);
                 for (uint32_t row = 0; row < rowCount; ++row)
                 {
-                    const uint8_t* sourceRow = loadedTexture.textureData.bytes.data() +
-                                               subresource.sourceOffsetBytes +
+                    const uint8_t* sourceRow = loadedTexture.textureData.bytes.data() + subresource.sourceOffsetBytes +
                                                (static_cast<size_t>(row) * subresource.rowPitchBytes);
-                    uint8_t* destinationRow =
-                        mappedTexture + stagedSubresource.stagingOffsetBytes +
-                        (static_cast<size_t>(row) * stagedSubresource.alignedRowPitchBytes);
+                    uint8_t* destinationRow = mappedTexture + stagedSubresource.stagingOffsetBytes +
+                                              (static_cast<size_t>(row) * stagedSubresource.alignedRowPitchBytes);
                     std::memcpy(destinationRow, sourceRow, subresource.rowPitchBytes);
                 }
             }
@@ -2156,7 +1861,7 @@ void Win32Application::InitializeScene()
         gpuMaterial.baseColor[3] = material.baseColor[3];
         gpuMaterial.roughness = material.roughness;
         gpuMaterial.metallic = material.metallic;
-        if (IsHongLabBistroMetalMaterial(material.debugName))
+        if (IsBistroMetalMaterial(material.debugName))
         {
             gpuMaterial.metallic = 1.0f;
             gpuMaterial.roughness = 0.1f;
@@ -2315,19 +2020,18 @@ void Win32Application::InitializeScene()
             loadStats.optimizedInstanceCount, loadStats.sourceVertexCount, loadStats.optimizedVertexCount,
             loadStats.sourceIndexCount, loadStats.optimizedIndexCount, loadStats.totalLoadMs, loadStats.cacheReadMs,
             loadStats.importMs, loadStats.optimizeMs, loadStats.cacheWriteMs));
-    Logger::Log(LogLevel::Info, LogCategory::Scene,
-                std::format("{} texture stats: cache={}, batchUpload={}, maxDimension={}, hits={}, misses={}, writes={}, "
-                            "fallbacks={}, "
-                            "load {:.2f} ms (assetCacheRead {:.2f}, sourceCacheRead {:.2f}, decode {:.2f}, "
-                            "mipBuild {:.2f}, assetCacheWrite {:.2f}), upload {:.2f} ms, staging {:.2f} MiB.",
-                            sceneName, OnOff(m_enableTextureCache), OnOff(m_enableTextureBatchUpload),
-                            m_sceneTextureMaxDimension,
-                            textureLoadSummary.cacheHits, textureLoadSummary.cacheMisses,
-                            textureLoadSummary.cacheWrites, textureLoadSummary.fallbackCount, textureLoadMs,
-                            textureLoadSummary.cacheReadMs, textureLoadSummary.sourceImageCacheReadMs,
-                            textureLoadSummary.decodeMs, textureLoadSummary.mipBuildMs,
-                            textureLoadSummary.cacheWriteMs, textureUploadMs,
-                            static_cast<double>(totalTextureStagingBytes) / (1024.0 * 1024.0)));
+    Logger::Log(
+        LogLevel::Info, LogCategory::Scene,
+        std::format("{} texture stats: cache={}, batchUpload={}, maxDimension={}, hits={}, misses={}, writes={}, "
+                    "fallbacks={}, "
+                    "load {:.2f} ms (assetCacheRead {:.2f}, sourceCacheRead {:.2f}, decode {:.2f}, "
+                    "mipBuild {:.2f}, assetCacheWrite {:.2f}), upload {:.2f} ms, staging {:.2f} MiB.",
+                    sceneName, OnOff(m_enableTextureCache), OnOff(m_enableTextureBatchUpload),
+                    m_sceneTextureMaxDimension, textureLoadSummary.cacheHits, textureLoadSummary.cacheMisses,
+                    textureLoadSummary.cacheWrites, textureLoadSummary.fallbackCount, textureLoadMs,
+                    textureLoadSummary.cacheReadMs, textureLoadSummary.sourceImageCacheReadMs,
+                    textureLoadSummary.decodeMs, textureLoadSummary.mipBuildMs, textureLoadSummary.cacheWriteMs,
+                    textureUploadMs, static_cast<double>(totalTextureStagingBytes) / (1024.0 * 1024.0)));
     Logger::Log(
         LogLevel::Info, LogCategory::Scene,
         std::format("{} upload stats: geometryBatchUpload={}, textureBatchUpload={}, geometry {:.2f} ms, "
@@ -2399,33 +2103,8 @@ void Win32Application::InitializeFreeLookCamera()
 
     const auto& boundsMin = m_sceneAsset->GetBoundsMin();
     const auto& boundsMax = m_sceneAsset->GetBoundsMax();
-    const std::array<float, 3> sceneCenter = {
-        (boundsMin[0] + boundsMax[0]) * 0.5f,
-        (boundsMin[1] + boundsMax[1]) * 0.5f,
-        (boundsMin[2] + boundsMax[2]) * 0.5f,
-    };
-    const std::array<float, 3> extents = {
-        boundsMax[0] - boundsMin[0],
-        boundsMax[1] - boundsMin[1],
-        boundsMax[2] - boundsMin[2],
-    };
-
-    const float sceneRadius = std::max({extents[0], extents[1], extents[2]}) * 0.5f;
-    m_runtimeCameraFarPlane = std::max(500.0f, sceneRadius * 6.0f);
-    m_freeLookPosition = {
-        sceneCenter[0] + (sceneRadius * 0.45f),
-        boundsMin[1] + (sceneRadius * 0.18f),
-        sceneCenter[2] + (sceneRadius * 0.95f),
-    };
-
-    const std::array<float, 3> toCenter = Normalize3({
-        sceneCenter[0] - m_freeLookPosition[0],
-        sceneCenter[1] - m_freeLookPosition[1],
-        sceneCenter[2] - m_freeLookPosition[2],
-    });
-
-    m_freeLookYawRadians = std::atan2(toCenter[2], toCenter[0]);
-    m_freeLookPitchRadians = std::asin(std::clamp(toCenter[1], -0.95f, 0.95f));
+    const float sceneRadius = m_freeLookCamera.ResetToBounds(boundsMin, boundsMax);
+    m_runtimeSettings.cameraFarPlane = std::max(500.0f, sceneRadius * 6.0f);
     m_hasLastMousePosition = false;
 }
 
@@ -2450,9 +2129,8 @@ void Win32Application::UpdateFreeLookCamera(float deltaSeconds, bool blockMouseL
             {
                 const float deltaX = static_cast<float>(cursorPosition.x - m_lastMouseX);
                 const float deltaY = static_cast<float>(cursorPosition.y - m_lastMouseY);
-                m_freeLookYawRadians += deltaX * m_runtimeCameraMouseSensitivity;
-                m_freeLookPitchRadians =
-                    std::clamp(m_freeLookPitchRadians - (deltaY * m_runtimeCameraMouseSensitivity), -1.45f, 1.45f);
+                m_freeLookCamera.Rotate(deltaX * m_runtimeSettings.cameraMouseSensitivity,
+                                        -deltaY * m_runtimeSettings.cameraMouseSensitivity);
             }
 
             m_lastMouseX = cursorPosition.x;
@@ -2466,71 +2144,59 @@ void Win32Application::UpdateFreeLookCamera(float deltaSeconds, bool blockMouseL
     }
 
     const float speedMultiplier = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 ? 4.0f : 1.0f;
-    const float moveSpeed = m_runtimeCameraMoveSpeed * speedMultiplier * deltaSeconds;
-    const std::array<float, 3> flatForward = MakeFlatForwardVector(m_freeLookYawRadians);
-    const std::array<float, 3> right = MakeRightVector(m_freeLookYawRadians);
-
-    auto move = [&](const std::array<float, 3>& direction, float scale)
-    {
-        m_freeLookPosition[0] += direction[0] * scale;
-        m_freeLookPosition[1] += direction[1] * scale;
-        m_freeLookPosition[2] += direction[2] * scale;
-    };
+    const float moveSpeed = m_runtimeSettings.cameraMoveSpeed * speedMultiplier * deltaSeconds;
+    float forwardUnits = 0.0f;
+    float rightUnits = 0.0f;
+    float verticalUnits = 0.0f;
 
     if ((GetAsyncKeyState('W') & 0x8000) != 0)
     {
-        move(flatForward, moveSpeed);
+        forwardUnits += moveSpeed;
     }
     if ((GetAsyncKeyState('S') & 0x8000) != 0)
     {
-        move(flatForward, -moveSpeed);
+        forwardUnits -= moveSpeed;
     }
     if ((GetAsyncKeyState('D') & 0x8000) != 0)
     {
-        move(right, moveSpeed);
+        rightUnits += moveSpeed;
     }
     if ((GetAsyncKeyState('A') & 0x8000) != 0)
     {
-        move(right, -moveSpeed);
+        rightUnits -= moveSpeed;
     }
     if ((GetAsyncKeyState('E') & 0x8000) != 0)
     {
-        m_freeLookPosition[1] += moveSpeed;
+        verticalUnits += moveSpeed;
     }
     if ((GetAsyncKeyState('Q') & 0x8000) != 0)
     {
-        m_freeLookPosition[1] -= moveSpeed;
+        verticalUnits -= moveSpeed;
     }
 
-    const std::array<float, 3> forward = MakeForwardVector(m_freeLookYawRadians, m_freeLookPitchRadians);
-    const std::array<float, 3> target = {
-        m_freeLookPosition[0] + forward[0],
-        m_freeLookPosition[1] + forward[1],
-        m_freeLookPosition[2] + forward[2],
-    };
-
-    m_sceneCamera->SetLookAt(m_freeLookPosition, target, {0.0f, 1.0f, 0.0f});
+    m_freeLookCamera.MoveFlat(forwardUnits, rightUnits, verticalUnits);
+    m_freeLookCamera.ApplyToCamera(*m_sceneCamera);
 }
 
 bool Win32Application::ConsumeKeyPress(int virtualKey)
 {
-    WEST_ASSERT(virtualKey >= 0 && virtualKey < static_cast<int>(m_runtimeKeyState.size()));
+    WEST_ASSERT(virtualKey >= 0 && virtualKey < static_cast<int>(m_runtimeSettings.keyState.size()));
 
     const bool isDown = (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
-    const bool pressed = isDown && !m_runtimeKeyState[virtualKey];
-    m_runtimeKeyState[virtualKey] = isDown;
+    const bool pressed = isDown && !m_runtimeSettings.keyState[virtualKey];
+    m_runtimeSettings.keyState[virtualKey] = isDown;
     return pressed;
 }
 
 void Win32Application::ApplyPostPreset(uint32 presetIndex, bool logChange)
 {
-    m_runtimePostPresetIndex = std::min<uint32>(presetIndex, static_cast<uint32>(kPostPresets.size() - 1u));
-    m_runtimePostPresetDirty = false;
+    m_runtimeSettings.postPresetIndex = std::min<uint32>(presetIndex, editor::GetPostPresetCount() - 1u);
+    m_runtimeSettings.postPresetDirty = false;
 
-    const PostPresetDefinition& preset = GetPostPreset(m_runtimePostPresetIndex);
-    m_runtimePostSettings = preset.toneMapping;
-    m_runtimeBokehSettings = preset.bokeh;
-    m_runtimeBokehEnabled = preset.enableBokeh && m_runtimeBokehSettings.intensity > 0.0f;
+    const editor::PostPresetDefinition& preset = editor::GetPostPreset(m_runtimeSettings.postPresetIndex);
+    m_runtimeSettings.post = preset.toneMapping;
+    m_runtimeSettings.bokeh = preset.bokeh;
+    m_runtimeSettings.bokehEnabled = preset.enableBokeh && m_runtimeSettings.bokeh.intensity > 0.0f;
     UpdateRuntimePostWindowTitle();
 
     if (logChange)
@@ -2551,24 +2217,28 @@ void Win32Application::LogRuntimePostControlsHelp() const
 
 void Win32Application::LogRuntimePostState(const char* reason) const
 {
-    Logger::Log(
-        LogLevel::Info, LogCategory::Core,
-        std::format("{}: preset='{}', toneMap={}, debug={} {}, exposure={:.2f}, contrast={:.2f}, "
-                    "brightness={:.2f}, saturation={:.2f}, vibrance={:.2f}, vignette={:.2f}, grain={:.3f}, "
-                    "chromAb={:.2f}, bokeh={} ({:.2f}), textures={}, shadows={}, ssao={}, ibl={}, "
-                    "alphaDiscard={}, "
-                    "light={:.2f}, env={:.2f}, diffuse={:.2f}, specular={:.2f}, fov={:.1f}.",
-                    reason, RuntimePostPresetLabel(m_runtimePostPresetIndex, m_runtimePostPresetDirty),
-                    ToneMappingOperatorName(m_runtimePostSettings.toneMappingOperator),
-                    PostDebugViewName(m_runtimePostSettings.debugView),
-                    PostDebugChannelName(m_runtimePostSettings.debugChannel), m_runtimePostSettings.exposure,
-                    m_runtimePostSettings.contrast, m_runtimePostSettings.brightness, m_runtimePostSettings.saturation,
-                    m_runtimePostSettings.vibrance, m_runtimePostSettings.vignetteStrength,
-                    m_runtimePostSettings.filmGrainStrength, m_runtimePostSettings.chromaticAberration,
-                    OnOff(m_runtimeBokehEnabled), m_runtimeBokehSettings.intensity, OnOff(m_runtimeTexturesEnabled),
-                    OnOff(m_runtimeShadowsEnabled), OnOff(m_runtimeSSAOEnabled), OnOff(m_runtimeIBLEnabled),
-                    OnOff(m_runtimeAlphaDiscardEnabled), m_runtimeLightIntensity, m_runtimeEnvironmentIntensity,
-                    m_runtimeDiffuseWeight, m_runtimeSpecularWeight, m_runtimeCameraFovDegrees));
+    Logger::Log(LogLevel::Info, LogCategory::Core,
+                std::format("{}: preset='{}', toneMap={}, debug={} {}, exposure={:.2f}, contrast={:.2f}, "
+                            "brightness={:.2f}, saturation={:.2f}, vibrance={:.2f}, vignette={:.2f}, grain={:.3f}, "
+                            "chromAb={:.2f}, bokeh={} ({:.2f}), textures={}, shadows={}, ssao={}, ibl={}, "
+                            "alphaDiscard={}, "
+                            "light={:.2f}, env={:.2f}, diffuse={:.2f}, specular={:.2f}, fov={:.1f}.",
+                            reason,
+                            editor::BuildRuntimePostPresetLabel(m_runtimeSettings.postPresetIndex,
+                                                                m_runtimeSettings.postPresetDirty),
+                            editor::ToneMappingOperatorName(m_runtimeSettings.post.toneMappingOperator),
+                            editor::PostDebugViewName(m_runtimeSettings.post.debugView),
+                            editor::PostDebugChannelName(m_runtimeSettings.post.debugChannel),
+                            m_runtimeSettings.post.exposure, m_runtimeSettings.post.contrast,
+                            m_runtimeSettings.post.brightness, m_runtimeSettings.post.saturation,
+                            m_runtimeSettings.post.vibrance, m_runtimeSettings.post.vignetteStrength,
+                            m_runtimeSettings.post.filmGrainStrength, m_runtimeSettings.post.chromaticAberration,
+                            OnOff(m_runtimeSettings.bokehEnabled), m_runtimeSettings.bokeh.intensity,
+                            OnOff(m_runtimeSettings.texturesEnabled), OnOff(m_runtimeSettings.shadowsEnabled),
+                            OnOff(m_runtimeSettings.ssaoEnabled), OnOff(m_runtimeSettings.iblEnabled),
+                            OnOff(m_runtimeSettings.alphaDiscardEnabled), m_runtimeSettings.lightIntensity,
+                            m_runtimeSettings.environmentIntensity, m_runtimeSettings.diffuseWeight,
+                            m_runtimeSettings.specularWeight, m_runtimeSettings.cameraFovDegrees));
 }
 
 void Win32Application::UpdateRuntimePostWindowTitle() const
@@ -2578,15 +2248,17 @@ void Win32Application::UpdateRuntimePostWindowTitle() const
         return;
     }
 
-    const std::string title =
-        std::format("{} | Post {} | TM {} | Dbg {} | Exp {:.2f} Sat {:.2f} | Bokeh {} {:.2f} | Tex {} Sh {} AO {} IBL "
-                    "{} Cut {} | GUI {} F1 | F5 Help",
-                    m_baseWindowTitle, RuntimePostPresetLabel(m_runtimePostPresetIndex, m_runtimePostPresetDirty),
-                    ToneMappingOperatorName(m_runtimePostSettings.toneMappingOperator),
-                    PostDebugViewName(m_runtimePostSettings.debugView), m_runtimePostSettings.exposure,
-                    m_runtimePostSettings.saturation, OnOff(m_runtimeBokehEnabled), m_runtimeBokehSettings.intensity,
-                    OnOff(m_runtimeTexturesEnabled), OnOff(m_runtimeShadowsEnabled), OnOff(m_runtimeSSAOEnabled),
-                    OnOff(m_runtimeIBLEnabled), OnOff(m_runtimeAlphaDiscardEnabled), OnOff(m_imguiVisible));
+    const std::string title = std::format(
+        "{} | Post {} | TM {} | Dbg {} | Exp {:.2f} Sat {:.2f} | Bokeh {} {:.2f} | Tex {} Sh {} AO {} IBL "
+        "{} Cut {} | GUI {} F1 | F5 Help",
+        m_baseWindowTitle,
+        editor::BuildRuntimePostPresetLabel(m_runtimeSettings.postPresetIndex, m_runtimeSettings.postPresetDirty),
+        editor::ToneMappingOperatorName(m_runtimeSettings.post.toneMappingOperator),
+        editor::PostDebugViewName(m_runtimeSettings.post.debugView), m_runtimeSettings.post.exposure,
+        m_runtimeSettings.post.saturation, OnOff(m_runtimeSettings.bokehEnabled), m_runtimeSettings.bokeh.intensity,
+        OnOff(m_runtimeSettings.texturesEnabled), OnOff(m_runtimeSettings.shadowsEnabled),
+        OnOff(m_runtimeSettings.ssaoEnabled), OnOff(m_runtimeSettings.iblEnabled),
+        OnOff(m_runtimeSettings.alphaDiscardEnabled), OnOff(m_runtimeSettings.imguiVisible));
     m_window->SetTitle(title);
 }
 
@@ -2607,153 +2279,153 @@ void Win32Application::UpdateRuntimePostControls(bool blockKeyboardShortcuts)
 
     if (ConsumeKeyPress(VK_F6))
     {
-        const uint32 nextPreset = (m_runtimePostPresetIndex + 1u) % static_cast<uint32>(kPostPresets.size());
+        const uint32 nextPreset = (m_runtimeSettings.postPresetIndex + 1u) % editor::GetPostPresetCount();
         ApplyPostPreset(nextPreset, true);
         changed = false;
     }
 
     if (ConsumeKeyPress(VK_F7))
     {
-        ApplyPostPreset(m_runtimePostPresetIndex, true);
+        ApplyPostPreset(m_runtimeSettings.postPresetIndex, true);
         changed = false;
     }
 
     if (ConsumeKeyPress(VK_F8))
     {
-        m_runtimeBokehEnabled = !m_runtimeBokehEnabled;
+        m_runtimeSettings.bokehEnabled = !m_runtimeSettings.bokehEnabled;
         changed = true;
     }
     if (ConsumeKeyPress(VK_F9))
     {
-        const uint32 nextToneMapping = (static_cast<uint32>(m_runtimePostSettings.toneMappingOperator) + 1u) %
+        const uint32 nextToneMapping = (static_cast<uint32>(m_runtimeSettings.post.toneMappingOperator) + 1u) %
                                        (static_cast<uint32>(render::ToneMappingPass::ToneMappingOperator::Hable) + 1u);
-        m_runtimePostSettings.toneMappingOperator =
+        m_runtimeSettings.post.toneMappingOperator =
             static_cast<render::ToneMappingPass::ToneMappingOperator>(nextToneMapping);
         changed = true;
     }
     if (ConsumeKeyPress(VK_F10))
     {
-        const uint32 nextDebugView = (static_cast<uint32>(m_runtimePostSettings.debugView) + 1u) %
+        const uint32 nextDebugView = (static_cast<uint32>(m_runtimeSettings.post.debugView) + 1u) %
                                      (static_cast<uint32>(render::ToneMappingPass::DebugView::PostSplit) + 1u);
-        m_runtimePostSettings.debugView = static_cast<render::ToneMappingPass::DebugView>(nextDebugView);
+        m_runtimeSettings.post.debugView = static_cast<render::ToneMappingPass::DebugView>(nextDebugView);
         changed = true;
     }
     if (ConsumeKeyPress(VK_F11))
     {
-        const uint32 nextDebugChannel = (static_cast<uint32>(m_runtimePostSettings.debugChannel) + 1u) %
+        const uint32 nextDebugChannel = (static_cast<uint32>(m_runtimeSettings.post.debugChannel) + 1u) %
                                         (static_cast<uint32>(render::ToneMappingPass::DebugChannel::Luminance) + 1u);
-        m_runtimePostSettings.debugChannel = static_cast<render::ToneMappingPass::DebugChannel>(nextDebugChannel);
+        m_runtimeSettings.post.debugChannel = static_cast<render::ToneMappingPass::DebugChannel>(nextDebugChannel);
         changed = true;
     }
 
     if (ConsumeKeyPress('1'))
     {
-        m_runtimePostSettings.exposure = std::clamp(m_runtimePostSettings.exposure - 0.10f, 0.25f, 4.0f);
+        m_runtimeSettings.post.exposure = std::clamp(m_runtimeSettings.post.exposure - 0.10f, 0.25f, 4.0f);
         changed = true;
     }
     if (ConsumeKeyPress('2'))
     {
-        m_runtimePostSettings.exposure = std::clamp(m_runtimePostSettings.exposure + 0.10f, 0.25f, 4.0f);
+        m_runtimeSettings.post.exposure = std::clamp(m_runtimeSettings.post.exposure + 0.10f, 0.25f, 4.0f);
         changed = true;
     }
     if (ConsumeKeyPress('3'))
     {
-        m_runtimePostSettings.contrast = std::clamp(m_runtimePostSettings.contrast - 0.05f, 0.50f, 2.0f);
+        m_runtimeSettings.post.contrast = std::clamp(m_runtimeSettings.post.contrast - 0.05f, 0.50f, 2.0f);
         changed = true;
     }
     if (ConsumeKeyPress('4'))
     {
-        m_runtimePostSettings.contrast = std::clamp(m_runtimePostSettings.contrast + 0.05f, 0.50f, 2.0f);
+        m_runtimeSettings.post.contrast = std::clamp(m_runtimeSettings.post.contrast + 0.05f, 0.50f, 2.0f);
         changed = true;
     }
     if (ConsumeKeyPress('5'))
     {
-        m_runtimePostSettings.saturation = std::clamp(m_runtimePostSettings.saturation - 0.05f, 0.0f, 2.0f);
+        m_runtimeSettings.post.saturation = std::clamp(m_runtimeSettings.post.saturation - 0.05f, 0.0f, 2.0f);
         changed = true;
     }
     if (ConsumeKeyPress('6'))
     {
-        m_runtimePostSettings.saturation = std::clamp(m_runtimePostSettings.saturation + 0.05f, 0.0f, 2.0f);
+        m_runtimeSettings.post.saturation = std::clamp(m_runtimeSettings.post.saturation + 0.05f, 0.0f, 2.0f);
         changed = true;
     }
     if (ConsumeKeyPress('7'))
     {
-        m_runtimePostSettings.vignetteStrength =
-            std::clamp(m_runtimePostSettings.vignetteStrength - 0.02f, 0.0f, 0.50f);
+        m_runtimeSettings.post.vignetteStrength =
+            std::clamp(m_runtimeSettings.post.vignetteStrength - 0.02f, 0.0f, 0.50f);
         changed = true;
     }
     if (ConsumeKeyPress('8'))
     {
-        m_runtimePostSettings.vignetteStrength =
-            std::clamp(m_runtimePostSettings.vignetteStrength + 0.02f, 0.0f, 0.50f);
+        m_runtimeSettings.post.vignetteStrength =
+            std::clamp(m_runtimeSettings.post.vignetteStrength + 0.02f, 0.0f, 0.50f);
         changed = true;
     }
     if (ConsumeKeyPress('9'))
     {
-        m_runtimeBokehSettings.intensity = std::clamp(m_runtimeBokehSettings.intensity - 0.05f, 0.0f, 1.0f);
-        if (m_runtimeBokehSettings.intensity <= 0.0f)
+        m_runtimeSettings.bokeh.intensity = std::clamp(m_runtimeSettings.bokeh.intensity - 0.05f, 0.0f, 1.0f);
+        if (m_runtimeSettings.bokeh.intensity <= 0.0f)
         {
-            m_runtimeBokehEnabled = false;
+            m_runtimeSettings.bokehEnabled = false;
         }
         changed = true;
     }
     if (ConsumeKeyPress('0'))
     {
-        m_runtimeBokehSettings.intensity = std::clamp(m_runtimeBokehSettings.intensity + 0.05f, 0.0f, 1.0f);
-        if (m_runtimeBokehSettings.intensity > 0.0f)
+        m_runtimeSettings.bokeh.intensity = std::clamp(m_runtimeSettings.bokeh.intensity + 0.05f, 0.0f, 1.0f);
+        if (m_runtimeSettings.bokeh.intensity > 0.0f)
         {
-            m_runtimeBokehEnabled = true;
+            m_runtimeSettings.bokehEnabled = true;
         }
         changed = true;
     }
     if (ConsumeKeyPress('O'))
     {
-        m_runtimePostSettings.chromaticAberration =
-            std::clamp(m_runtimePostSettings.chromaticAberration - 0.02f, 0.0f, 0.40f);
+        m_runtimeSettings.post.chromaticAberration =
+            std::clamp(m_runtimeSettings.post.chromaticAberration - 0.02f, 0.0f, 0.40f);
         changed = true;
     }
     if (ConsumeKeyPress('P'))
     {
-        m_runtimePostSettings.chromaticAberration =
-            std::clamp(m_runtimePostSettings.chromaticAberration + 0.02f, 0.0f, 0.40f);
+        m_runtimeSettings.post.chromaticAberration =
+            std::clamp(m_runtimeSettings.post.chromaticAberration + 0.02f, 0.0f, 0.40f);
         changed = true;
     }
     if (ConsumeKeyPress('N'))
     {
-        m_runtimePostSettings.filmGrainStrength =
-            std::clamp(m_runtimePostSettings.filmGrainStrength - 0.005f, 0.0f, 0.08f);
+        m_runtimeSettings.post.filmGrainStrength =
+            std::clamp(m_runtimeSettings.post.filmGrainStrength - 0.005f, 0.0f, 0.08f);
         changed = true;
     }
     if (ConsumeKeyPress('M'))
     {
-        m_runtimePostSettings.filmGrainStrength =
-            std::clamp(m_runtimePostSettings.filmGrainStrength + 0.005f, 0.0f, 0.08f);
+        m_runtimeSettings.post.filmGrainStrength =
+            std::clamp(m_runtimeSettings.post.filmGrainStrength + 0.005f, 0.0f, 0.08f);
         changed = true;
     }
     if (ConsumeKeyPress('J'))
     {
-        m_runtimePostSettings.brightness = std::clamp(m_runtimePostSettings.brightness - 0.02f, -0.5f, 0.5f);
+        m_runtimeSettings.post.brightness = std::clamp(m_runtimeSettings.post.brightness - 0.02f, -0.5f, 0.5f);
         changed = true;
     }
     if (ConsumeKeyPress('K'))
     {
-        m_runtimePostSettings.brightness = std::clamp(m_runtimePostSettings.brightness + 0.02f, -0.5f, 0.5f);
+        m_runtimeSettings.post.brightness = std::clamp(m_runtimeSettings.post.brightness + 0.02f, -0.5f, 0.5f);
         changed = true;
     }
     if (ConsumeKeyPress('V'))
     {
-        m_runtimePostSettings.vibrance = std::clamp(m_runtimePostSettings.vibrance - 0.05f, -1.0f, 1.0f);
+        m_runtimeSettings.post.vibrance = std::clamp(m_runtimeSettings.post.vibrance - 0.05f, -1.0f, 1.0f);
         changed = true;
     }
     if (ConsumeKeyPress('B'))
     {
-        m_runtimePostSettings.vibrance = std::clamp(m_runtimePostSettings.vibrance + 0.05f, -1.0f, 1.0f);
+        m_runtimeSettings.post.vibrance = std::clamp(m_runtimeSettings.post.vibrance + 0.05f, -1.0f, 1.0f);
         changed = true;
     }
 
     if (changed)
     {
-        m_runtimePostPresetDirty = true;
+        m_runtimeSettings.postPresetDirty = true;
         UpdateRuntimePostWindowTitle();
         LogRuntimePostState("Runtime post updated");
     }
@@ -2763,124 +2435,14 @@ void Win32Application::BuildTelemetryOverlay()
 {
     WEST_ASSERT(m_frameTelemetry != nullptr);
 
-    const editor::FrameTelemetryStats& stats = m_frameTelemetry->GetDisplayStats();
-    const editor::RenderGraphEvidence& evidence = m_frameTelemetry->GetRenderGraphEvidence();
-    const rhi::RHIDeviceCaps caps = m_rhiDevice != nullptr ? m_rhiDevice->GetCapabilities() : rhi::RHIDeviceCaps{};
-
-#if defined(TRACY_ENABLE)
-    constexpr bool kTracyEnabled = true;
-#else
-    constexpr bool kTracyEnabled = false;
-#endif
-
-    ImGui::SetNextWindowPos(ImVec2(492.0f, 16.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(460.0f, 330.0f), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("WestEngine Telemetry", nullptr, ImGuiWindowFlags_NoCollapse))
-    {
-        ImGui::End();
-        return;
-    }
-
-    const ImVec4 warningColor = ImVec4(0.95f, 0.72f, 0.28f, 1.0f);
-
-    ImGui::Text("Backend: %s | GPU timestamps: %s", BackendName(m_backend), OnOff(caps.supportsTimestampQueries));
-    ImGui::Text("Timing (%.1fs avg): %.1f FPS | CPU %.2f ms", editor::FrameTelemetry::kDisplayRefreshSeconds,
-                stats.fps, stats.latestCpuFrameMs);
-
-    if (stats.hasGpuFrameTime)
-    {
-        ImGui::Text("GPU %.2f ms", stats.latestGpuFrameMs);
-    }
-    else
-    {
-        ImGui::TextColored(warningColor, "GPU frame time: pending async timestamp readback");
-    }
-
-    const float cullPercent = m_sceneDrawCount > 0
-                                  ? 100.0f - (static_cast<float>(m_lastGPUDrivenVisibleCount) /
-                                              static_cast<float>(m_sceneDrawCount) * 100.0f)
-                                  : 0.0f;
-    ImGui::Text("GPU-driven draws: %u visible / %u candidates (%.1f%% culled)",
-                m_lastGPUDrivenVisibleCount, m_sceneDrawCount, cullPercent);
-    ImGui::Text("Tracy: %s", kTracyEnabled ? "compiled in" : "off");
-
-    const std::span<const editor::GpuPassTelemetry> gpuPassTimings = m_frameTelemetry->GetGpuPassTimings();
-    if (!gpuPassTimings.empty() && ImGui::TreeNode("GPU pass timings"))
-    {
-        for (uint32 index = 0; index < gpuPassTimings.size(); ++index)
-        {
-            const editor::GpuPassTelemetry& pass = gpuPassTimings[index];
-            ImGui::BulletText("%02u %-28s [%s] %.3f ms", index, pass.debugName.c_str(),
-                              QueueTypeName(pass.queueType), pass.gpuMs);
-        }
-        ImGui::TreePop();
-    }
-
-    ImGui::Separator();
-    if (!evidence.valid)
-    {
-        ImGui::TextColored(warningColor, "Render Graph evidence: pending first compile");
-        ImGui::End();
-        return;
-    }
-
-    ImGui::Text("RenderGraph: %u passes | %u resources | %u batches", evidence.passCount,
-                evidence.resourceCount, evidence.queueBatchCount);
-    ImGui::Text("Barriers: %u transitions | %u UAV | %u final", evidence.transitionBarrierCount,
-                evidence.uavBarrierCount, evidence.finalBarrierCount);
-
-    if (ImGui::TreeNode("RenderGraph internals"))
-    {
-        ImGui::Text("Resources: %u imported | %u transient | %u aliased", evidence.importedResourceCount,
-                    evidence.transientResourceCount, evidence.aliasedResourceCount);
-        ImGui::Text("Aliasing barriers: %u", evidence.aliasingBarrierCount);
-        ImGui::Text("Transient peak: %s -> %s", FormatBytes(evidence.peakBytesWithoutAliasing).c_str(),
-                    FormatBytes(evidence.peakBytesWithAliasing).c_str());
-        ImGui::Text("Aliasing saved: %s", FormatBytes(evidence.bytesSavedWithAliasing).c_str());
-        ImGui::TreePop();
-    }
-
-    if (ImGui::TreeNode("RenderGraph passes"))
-    {
-        for (uint32 index = 0; index < evidence.passes.size(); ++index)
-        {
-            const editor::RenderGraphPassTelemetry& pass = evidence.passes[index];
-            ImGui::BulletText("%02u %-28s [%s] uses R:%u W:%u RW:%u preBarriers:%u", index,
-                              pass.debugName.c_str(), QueueTypeName(pass.queueType), pass.readUseCount,
-                              pass.writeUseCount, pass.readWriteUseCount, pass.preBarrierCount);
-        }
-        ImGui::TreePop();
-    }
-
-    if (ImGui::TreeNode("Render Graph resources"))
-    {
-        for (uint32 index = 0; index < evidence.resources.size(); ++index)
-        {
-            const editor::RenderGraphResourceTelemetry& resource = evidence.resources[index];
-            const char* aliasText = resource.aliasSlot != render::kInvalidRenderGraphIndex ? "alias" : "unique";
-            const std::string aliasSlotLabel = resource.aliasSlot != render::kInvalidRenderGraphIndex
-                                                   ? std::format("{}", resource.aliasSlot)
-                                                   : "-";
-            const std::string resourceSizeLabel = FormatBytes(resource.estimatedSizeBytes);
-            if (resource.lifetimeValid)
-            {
-                ImGui::BulletText("%02u %-30s %-7s %s pass %u..%u slot %s size %s", index,
-                                  resource.debugName.c_str(), ResourceKindName(resource.kind),
-                                  resource.imported ? "imported" : aliasText, resource.firstUsePass,
-                                  resource.lastUsePass, aliasSlotLabel.c_str(), resourceSizeLabel.c_str());
-            }
-            else
-            {
-                ImGui::BulletText("%02u %-30s %-7s imported:%s unused size %s", index,
-                                  resource.debugName.c_str(), ResourceKindName(resource.kind),
-                                  OnOff(resource.imported), resourceSizeLabel.c_str());
-            }
-        }
-        ImGui::TreePop();
-    }
-
-    ImGui::End();
+    const editor::TelemetryOverlayDesc overlayDesc{
+        .frameTelemetry = m_frameTelemetry.get(),
+        .deviceCaps = m_rhiDevice != nullptr ? m_rhiDevice->GetCapabilities() : rhi::RHIDeviceCaps{},
+        .backendName = BackendName(m_backend),
+        .visibleDrawCount = m_lastGPUDrivenVisibleCount,
+        .candidateDrawCount = m_sceneDrawCount,
+    };
+    editor::BuildTelemetryOverlay(overlayDesc);
 }
 
 void Win32Application::BuildImGuiControlPanel()
@@ -2888,33 +2450,21 @@ void Win32Application::BuildImGuiControlPanel()
     WEST_ASSERT(m_imguiRenderer != nullptr);
     WEST_ASSERT(m_frameTelemetry != nullptr);
 
-    if (!m_imguiVisible)
+    if (!m_runtimeSettings.imguiVisible)
     {
         return;
     }
 
     BuildTelemetryOverlay();
 
-    static constexpr std::array<const char*, 10> kToneMappingLabels = {
-        "None",   "Reinhard",    "ACES",         "Uncharted2", "GranTurismo",
-        "Lottes", "Exponential", "Reinhard Ext", "Luminance",  "Hable",
-    };
-    static constexpr std::array<const char*, 4> kDebugViewLabels = {
-        "Off",
-        "Tone Split",
-        "Channels",
-        "Post Split",
-    };
-    static constexpr std::array<const char*, 6> kDebugChannelLabels = {
-        "All", "Red", "Green", "Blue", "Alpha", "Luminance",
-    };
-
     bool titleChanged = false;
     bool postChanged = false;
     bool renderChanged = false;
     bool inspectorChanged = false;
     bool windowOpen = true;
-    const std::string currentPreset = RuntimePostPresetLabel(m_runtimePostPresetIndex, m_runtimePostPresetDirty);
+    const std::string currentPreset =
+        editor::BuildRuntimePostPresetLabel(m_runtimeSettings.postPresetIndex, m_runtimeSettings.postPresetDirty);
+    const std::span<const editor::PostPresetDefinition> postPresets = editor::GetPostPresets();
 
     ImGui::SetNextWindowPos(ImVec2(16.0f, 16.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(460.0f, 860.0f), ImGuiCond_FirstUseEver);
@@ -2922,57 +2472,26 @@ void Win32Application::BuildImGuiControlPanel()
     if (ImGui::Begin("WestEngine Runtime", &windowOpen, ImGuiWindowFlags_NoCollapse))
     {
         ImGui::Text("Backend: %s", BackendName(m_backend));
-        ImGui::Text("Scene: %s", ScenePresetName(m_useCanonicalGltfScene));
+        const std::string sceneName = SceneDisplayName(m_sceneDesc);
+        ImGui::Text("Scene: %s", sceneName.c_str());
         ImGui::Text("GPU-driven: %s", OnOff(m_gpuDrivenAvailable));
-        const float cullPercent = m_sceneDrawCount > 0
-                                      ? 100.0f - (static_cast<float>(m_lastGPUDrivenVisibleCount) /
-                                                  static_cast<float>(m_sceneDrawCount) * 100.0f)
-                                      : 0.0f;
-        ImGui::Text("Visible Draws: %u / %u (%.1f%% culled)",
-                    m_lastGPUDrivenVisibleCount, m_sceneDrawCount, cullPercent);
+        const float cullPercent = m_sceneDrawCount > 0 ? 100.0f - (static_cast<float>(m_lastGPUDrivenVisibleCount) /
+                                                                   static_cast<float>(m_sceneDrawCount) * 100.0f)
+                                                       : 0.0f;
+        ImGui::Text("Visible Draws: %u / %u (%.1f%% culled)", m_lastGPUDrivenVisibleCount, m_sceneDrawCount,
+                    cullPercent);
         ImGui::Separator();
 
-        if (ImGui::Checkbox("Capture GUI Input", &m_imguiCaptureInput))
+        if (ImGui::Checkbox("Capture GUI Input", &m_runtimeSettings.imguiCaptureInput))
         {
             titleChanged = true;
         }
         ImGui::Separator();
 
-        ImGui::TextUnformatted("Render Features");
-        renderChanged |= ImGui::Checkbox("Textures", &m_runtimeTexturesEnabled);
-        renderChanged |= ImGui::Checkbox("Shadows", &m_runtimeShadowsEnabled);
-        renderChanged |= ImGui::Checkbox("SSAO", &m_runtimeSSAOEnabled);
-        renderChanged |= ImGui::Checkbox("IBL", &m_runtimeIBLEnabled);
-        renderChanged |= ImGui::Checkbox("Alpha Discard", &m_runtimeAlphaDiscardEnabled);
+        renderChanged |= editor::BuildRenderFeatureControls(m_runtimeSettings);
         ImGui::Separator();
 
-        if (ImGui::CollapsingHeader("Lighting & PBR", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            inspectorChanged |= ImGui::SliderFloat("Light Intensity", &m_runtimeLightIntensity, 0.0f, 12.0f, "%.2f");
-            inspectorChanged |=
-                ImGui::SliderFloat("Light Elevation", &m_runtimeLightElevationDegrees, 5.0f, 89.0f, "%.1f deg");
-            inspectorChanged |=
-                ImGui::SliderFloat("Light Azimuth", &m_runtimeLightAzimuthDegrees, -180.0f, 180.0f, "%.1f deg");
-            inspectorChanged |=
-                ImGui::SliderFloat("Environment Intensity", &m_runtimeEnvironmentIntensity, 0.0f, 4.0f, "%.2f");
-
-            ImGui::Separator();
-            ImGui::TextUnformatted("Global PBR");
-            inspectorChanged |= ImGui::SliderFloat("Diffuse Weight", &m_runtimeDiffuseWeight, 0.0f, 2.0f, "%.2f");
-            inspectorChanged |= ImGui::SliderFloat("Specular Weight", &m_runtimeSpecularWeight, 0.0f, 2.0f, "%.2f");
-            inspectorChanged |= ImGui::SliderFloat("Metallic Weight", &m_runtimeMetallicScale, 0.0f, 1.0f, "%.2f");
-            inspectorChanged |= ImGui::SliderFloat("Roughness Weight", &m_runtimeRoughnessScale, 0.0f, 1.0f, "%.2f");
-            ImGui::Separator();
-            ImGui::TextUnformatted("SSAO");
-            inspectorChanged |= ImGui::SliderFloat("SSAO Radius", &m_runtimeSSAORadius, 0.01f, 0.50f, "%.3f");
-            inspectorChanged |= ImGui::SliderFloat("SSAO Bias", &m_runtimeSSAOBias, 0.0f, 0.10f, "%.4f");
-            inspectorChanged |= ImGui::SliderInt("SSAO Samples", &m_runtimeSSAOSampleCount, 0, 64);
-            inspectorChanged |= ImGui::SliderFloat("SSAO Power", &m_runtimeSSAOPower, 0.5f, 4.0f, "%.2f");
-            ImGui::Separator();
-            inspectorChanged |= ImGui::SliderFloat("Shadow Bias", &m_runtimeShadowBias, 0.0f, 0.01f, "%.4f");
-            inspectorChanged |=
-                ImGui::SliderFloat("Shadow Normal Bias", &m_runtimeShadowNormalBias, 0.0f, 0.05f, "%.4f");
-        }
+        inspectorChanged |= editor::BuildLightingAndPBRControls(m_runtimeSettings);
 
         if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -2990,33 +2509,40 @@ void Win32Application::BuildImGuiControlPanel()
                 boundsMax[1] - boundsMin[1],
                 boundsMax[2] - boundsMin[2],
             };
-            const float sceneRadius = std::max(1.0f, Length3(extents) * 0.5f);
+            const float sceneRadius = std::max(1.0f, scene::Length3(extents) * 0.5f);
             const float positionLimit = std::max(25.0f, sceneRadius * 2.5f);
             const float farPlaneLimit = std::max(2000.0f, sceneRadius * 20.0f);
 
-            float yawDegrees = RadiansToDegrees(m_freeLookYawRadians);
-            float pitchDegrees = RadiansToDegrees(m_freeLookPitchRadians);
+            std::array<float, 3> cameraPosition = m_freeLookCamera.GetPosition();
+            float yawDegrees = RadiansToDegrees(m_freeLookCamera.GetYawRadians());
+            float pitchDegrees = RadiansToDegrees(m_freeLookCamera.GetPitchRadians());
 
-            inspectorChanged |=
-                ImGui::SliderFloat3("Position", m_freeLookPosition.data(), -positionLimit, positionLimit, "%.2f");
+            if (ImGui::SliderFloat3("Position", cameraPosition.data(), -positionLimit, positionLimit, "%.2f"))
+            {
+                m_freeLookCamera.SetPosition(cameraPosition);
+                inspectorChanged = true;
+            }
             if (ImGui::SliderFloat("Yaw", &yawDegrees, -180.0f, 180.0f, "%.1f deg"))
             {
-                m_freeLookYawRadians = DegreesToRadians(yawDegrees);
+                m_freeLookCamera.SetYawRadians(DegreesToRadians(yawDegrees));
                 inspectorChanged = true;
             }
             if (ImGui::SliderFloat("Pitch", &pitchDegrees, -83.0f, 83.0f, "%.1f deg"))
             {
-                m_freeLookPitchRadians = DegreesToRadians(pitchDegrees);
+                m_freeLookCamera.SetPitchRadians(DegreesToRadians(pitchDegrees));
                 inspectorChanged = true;
             }
 
-            inspectorChanged |= ImGui::SliderFloat("Move Speed", &m_runtimeCameraMoveSpeed, 0.5f, 80.0f, "%.1f");
             inspectorChanged |=
-                ImGui::SliderFloat("Mouse Sensitivity", &m_runtimeCameraMouseSensitivity, 0.0005f, 0.02f, "%.4f");
+                ImGui::SliderFloat("Move Speed", &m_runtimeSettings.cameraMoveSpeed, 0.5f, 80.0f, "%.1f");
+            inspectorChanged |= ImGui::SliderFloat("Mouse Sensitivity", &m_runtimeSettings.cameraMouseSensitivity,
+                                                   0.0005f, 0.02f, "%.4f");
             inspectorChanged |=
-                ImGui::SliderFloat("Field of View", &m_runtimeCameraFovDegrees, 30.0f, 120.0f, "%.1f deg");
-            inspectorChanged |= ImGui::SliderFloat("Near Plane", &m_runtimeCameraNearPlane, 0.01f, 5.0f, "%.2f");
-            inspectorChanged |= ImGui::SliderFloat("Far Plane", &m_runtimeCameraFarPlane, 50.0f, farPlaneLimit, "%.0f");
+                ImGui::SliderFloat("Field of View", &m_runtimeSettings.cameraFovDegrees, 30.0f, 120.0f, "%.1f deg");
+            inspectorChanged |=
+                ImGui::SliderFloat("Near Plane", &m_runtimeSettings.cameraNearPlane, 0.01f, 5.0f, "%.2f");
+            inspectorChanged |=
+                ImGui::SliderFloat("Far Plane", &m_runtimeSettings.cameraFarPlane, 50.0f, farPlaneLimit, "%.0f");
 
             if (ImGui::Button("Reset View"))
             {
@@ -3026,38 +2552,38 @@ void Win32Application::BuildImGuiControlPanel()
             ImGui::SameLine();
             if (ImGui::Button("Side View"))
             {
-                m_freeLookPosition = {
-                    sceneCenter[0] + (sceneRadius * 1.35f),
-                    sceneCenter[1] + (sceneRadius * 0.22f),
-                    sceneCenter[2],
-                };
-                m_freeLookYawRadians = std::numbers::pi_v<float>;
-                m_freeLookPitchRadians = 0.0f;
+                m_freeLookCamera.SetPose(
+                    {
+                        sceneCenter[0] + (sceneRadius * 1.35f),
+                        sceneCenter[1] + (sceneRadius * 0.22f),
+                        sceneCenter[2],
+                    },
+                    std::numbers::pi_v<float>, 0.0f);
                 inspectorChanged = true;
             }
             ImGui::SameLine();
             if (ImGui::Button("Top View"))
             {
-                m_freeLookPosition = {
-                    sceneCenter[0],
-                    sceneCenter[1] + (sceneRadius * 1.65f),
-                    sceneCenter[2] + 0.001f,
-                };
-                m_freeLookYawRadians = -std::numbers::pi_v<float> * 0.5f;
-                m_freeLookPitchRadians = -1.45f;
+                m_freeLookCamera.SetPose(
+                    {
+                        sceneCenter[0],
+                        sceneCenter[1] + (sceneRadius * 1.65f),
+                        sceneCenter[2] + 0.001f,
+                    },
+                    -std::numbers::pi_v<float> * 0.5f, scene::FreeLookCameraController::kMinPitchRadians);
                 inspectorChanged = true;
             }
             ImGui::SameLine();
             if (ImGui::Button("Culling Proof View"))
             {
-                m_freeLookPosition = {
-                    sceneCenter[0] + (sceneRadius * 0.85f),
-                    sceneCenter[1] + (sceneRadius * 0.16f),
-                    sceneCenter[2] + (sceneRadius * 1.05f),
-                };
-                m_freeLookYawRadians = -std::numbers::pi_v<float> * 0.82f;
-                m_freeLookPitchRadians = -0.06f;
-                m_runtimeCameraFovDegrees = 38.0f;
+                m_freeLookCamera.SetPose(
+                    {
+                        sceneCenter[0] + (sceneRadius * 0.85f),
+                        sceneCenter[1] + (sceneRadius * 0.16f),
+                        sceneCenter[2] + (sceneRadius * 1.05f),
+                    },
+                    -std::numbers::pi_v<float> * 0.82f, -0.06f);
+                m_runtimeSettings.cameraFovDegrees = 38.0f;
                 inspectorChanged = true;
             }
         }
@@ -3066,10 +2592,10 @@ void Win32Application::BuildImGuiControlPanel()
 
         if (ImGui::BeginCombo("Preset", currentPreset.c_str()))
         {
-            for (uint32 index = 0; index < static_cast<uint32>(kPostPresets.size()); ++index)
+            for (uint32 index = 0; index < static_cast<uint32>(postPresets.size()); ++index)
             {
-                const bool selected = index == m_runtimePostPresetIndex;
-                if (ImGui::Selectable(kPostPresets[index].name, selected))
+                const bool selected = index == m_runtimeSettings.postPresetIndex;
+                if (ImGui::Selectable(postPresets[index].name, selected))
                 {
                     ApplyPostPreset(index, false);
                     titleChanged = true;
@@ -3084,7 +2610,7 @@ void Win32Application::BuildImGuiControlPanel()
 
         if (ImGui::Button("Reset Preset"))
         {
-            ApplyPostPreset(m_runtimePostPresetIndex, false);
+            ApplyPostPreset(m_runtimeSettings.postPresetIndex, false);
             titleChanged = true;
         }
         ImGui::SameLine();
@@ -3094,100 +2620,22 @@ void Win32Application::BuildImGuiControlPanel()
         }
 
         ImGui::Separator();
-        ImGui::TextUnformatted("Tone Mapping");
-
-        int toneMappingOperator = static_cast<int>(m_runtimePostSettings.toneMappingOperator);
-        if (ImGui::Combo("Operator", &toneMappingOperator, kToneMappingLabels.data(),
-                         static_cast<int>(kToneMappingLabels.size())))
-        {
-            m_runtimePostSettings.toneMappingOperator =
-                static_cast<render::ToneMappingPass::ToneMappingOperator>(toneMappingOperator);
-            postChanged = true;
-        }
-
-        int debugView = static_cast<int>(m_runtimePostSettings.debugView);
-        if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels.data(), static_cast<int>(kDebugViewLabels.size())))
-        {
-            m_runtimePostSettings.debugView = static_cast<render::ToneMappingPass::DebugView>(debugView);
-            postChanged = true;
-        }
-
-        int debugChannel = static_cast<int>(m_runtimePostSettings.debugChannel);
-        if (ImGui::Combo("Debug Channel", &debugChannel, kDebugChannelLabels.data(),
-                         static_cast<int>(kDebugChannelLabels.size())))
-        {
-            m_runtimePostSettings.debugChannel = static_cast<render::ToneMappingPass::DebugChannel>(debugChannel);
-            postChanged = true;
-        }
-
-        postChanged |= ImGui::SliderFloat("Exposure", &m_runtimePostSettings.exposure, 0.25f, 4.0f, "%.2f");
-        postChanged |= ImGui::SliderFloat("Gamma", &m_runtimePostSettings.gamma, 1.0f, 2.4f, "%.2f");
-        postChanged |= ImGui::SliderFloat("Contrast", &m_runtimePostSettings.contrast, 0.50f, 2.0f, "%.2f");
-        postChanged |= ImGui::SliderFloat("Brightness", &m_runtimePostSettings.brightness, -0.50f, 0.50f, "%.2f");
-        postChanged |= ImGui::SliderFloat("Saturation", &m_runtimePostSettings.saturation, 0.0f, 2.0f, "%.2f");
-        postChanged |= ImGui::SliderFloat("Vibrance", &m_runtimePostSettings.vibrance, -1.0f, 1.0f, "%.2f");
-
-        if (m_runtimePostSettings.toneMappingOperator == render::ToneMappingPass::ToneMappingOperator::ReinhardExtended)
-        {
-            postChanged |= ImGui::SliderFloat("Max White", &m_runtimePostSettings.maxWhite, 1.0f, 12.0f, "%.2f");
-        }
-        if (m_runtimePostSettings.debugView != render::ToneMappingPass::DebugView::Off)
-        {
-            postChanged |= ImGui::SliderFloat("Debug Split", &m_runtimePostSettings.debugSplit, 0.05f, 0.95f, "%.2f");
-        }
+        postChanged |= editor::BuildPostProcessingControls(m_runtimeSettings);
 
         ImGui::Separator();
-        ImGui::TextUnformatted("Effects");
-
-        if (ImGui::Checkbox("Bokeh DOF", &m_runtimeBokehEnabled))
-        {
-            postChanged = true;
-        }
-        postChanged |= ImGui::Checkbox("FXAA", &m_runtimePostSettings.FXAAEnabled);
-        postChanged |=
-            ImGui::SliderFloat("Chromatic Aberration", &m_runtimePostSettings.chromaticAberration, 0.0f, 0.40f, "%.2f");
-        postChanged |= ImGui::SliderFloat("Film Grain", &m_runtimePostSettings.filmGrainStrength, 0.0f, 0.08f, "%.3f");
-        postChanged |=
-            ImGui::SliderFloat("Vignette Strength", &m_runtimePostSettings.vignetteStrength, 0.0f, 0.50f, "%.2f");
-        postChanged |=
-            ImGui::SliderFloat("Vignette Radius", &m_runtimePostSettings.vignetteRadius, 0.50f, 1.00f, "%.2f");
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("Bokeh");
-
-        if (ImGui::SliderFloat("Bokeh Intensity", &m_runtimeBokehSettings.intensity, 0.0f, 1.0f, "%.2f"))
-        {
-            if (m_runtimeBokehSettings.intensity > 0.0f)
-            {
-                m_runtimeBokehEnabled = true;
-            }
-            postChanged = true;
-        }
-        postChanged |= ImGui::SliderFloat("Focus Range", &m_runtimeBokehSettings.focusRangeScale, 0.02f, 0.35f, "%.2f");
-        postChanged |=
-            ImGui::SliderFloat("Max Blur Radius", &m_runtimeBokehSettings.maxBlurRadius, 1.0f, 10.0f, "%.2f");
-        postChanged |=
-            ImGui::SliderFloat("Highlight Boost", &m_runtimeBokehSettings.highlightBoost, 0.5f, 2.0f, "%.2f");
-        postChanged |=
-            ImGui::SliderFloat("Foreground Bias", &m_runtimeBokehSettings.foregroundBias, 0.0f, 1.0f, "%.2f");
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("Hotkeys");
-        ImGui::TextUnformatted("F1 GUI  |  F5 Help  |  F6 Preset  |  F8 Bokeh");
-        ImGui::TextUnformatted("F9 ToneMap  |  F10 DebugView  |  F11 DebugChannel");
-        ImGui::TextUnformatted("1..0 / O,P / N,M / J,K / V,B still work when GUI input is not capturing.");
+        editor::BuildRuntimeHotkeyHelp();
     }
     ImGui::End();
 
     if (!windowOpen)
     {
-        m_imguiVisible = false;
+        m_runtimeSettings.imguiVisible = false;
         titleChanged = true;
     }
 
     if (postChanged)
     {
-        m_runtimePostPresetDirty = true;
+        m_runtimeSettings.postPresetDirty = true;
         UpdateRuntimePostWindowTitle();
     }
     else if (titleChanged || renderChanged || inspectorChanged)
@@ -3281,10 +2729,10 @@ void Win32Application::RenderFrame()
 
     if (ConsumeKeyPress(VK_F1))
     {
-        m_imguiVisible = !m_imguiVisible;
+        m_runtimeSettings.imguiVisible = !m_runtimeSettings.imguiVisible;
         UpdateRuntimePostWindowTitle();
         Logger::Log(LogLevel::Info, LogCategory::Core,
-                    std::format("Runtime ImGui overlay {}.", m_imguiVisible ? "enabled" : "disabled"));
+                    std::format("Runtime ImGui overlay {}.", m_runtimeSettings.imguiVisible ? "enabled" : "disabled"));
     }
 
     if (m_swapChain)
@@ -3380,7 +2828,7 @@ void Win32Application::RenderFrame()
         (boundsMin[1] + boundsMax[1]) * 0.5f,
         (boundsMin[2] + boundsMax[2]) * 0.5f,
     };
-    const float sceneRadius = std::max(1.0f, Length3(extents) * 0.5f);
+    const float sceneRadius = std::max(1.0f, scene::Length3(extents) * 0.5f);
     const float deltaSeconds = static_cast<float>(m_timer.GetDeltaTime());
     if (m_frameTelemetry != nullptr)
     {
@@ -3400,45 +2848,43 @@ void Win32Application::RenderFrame()
     const editor::ImGuiRenderer::InputState imguiInput =
         BuildImGuiInputState(hwnd, windowWidth, windowHeight, deltaSeconds);
     m_imguiRenderer->BeginFrame(imguiInput);
-    m_imguiWantsMouseCapture = m_imguiCaptureInput && m_imguiRenderer->WantsMouseCapture();
-    m_imguiWantsKeyboardCapture = m_imguiCaptureInput && m_imguiRenderer->WantsKeyboardCapture();
-    UpdateFreeLookCamera(deltaSeconds, m_imguiWantsMouseCapture);
-    UpdateRuntimePostControls(m_imguiWantsKeyboardCapture);
+    m_runtimeSettings.imguiWantsMouseCapture =
+        m_runtimeSettings.imguiCaptureInput && m_imguiRenderer->WantsMouseCapture();
+    m_runtimeSettings.imguiWantsKeyboardCapture =
+        m_runtimeSettings.imguiCaptureInput && m_imguiRenderer->WantsKeyboardCapture();
+    UpdateFreeLookCamera(deltaSeconds, m_runtimeSettings.imguiWantsMouseCapture);
+    UpdateRuntimePostControls(m_runtimeSettings.imguiWantsKeyboardCapture);
     BuildImGuiControlPanel();
     m_imguiRenderer->EndFrame(frameIndex);
-    m_imguiWantsMouseCapture = m_imguiCaptureInput && m_imguiRenderer->WantsMouseCapture();
-    m_imguiWantsKeyboardCapture = m_imguiCaptureInput && m_imguiRenderer->WantsKeyboardCapture();
+    m_runtimeSettings.imguiWantsMouseCapture =
+        m_runtimeSettings.imguiCaptureInput && m_imguiRenderer->WantsMouseCapture();
+    m_runtimeSettings.imguiWantsKeyboardCapture =
+        m_runtimeSettings.imguiCaptureInput && m_imguiRenderer->WantsKeyboardCapture();
 
-    m_runtimeCameraFovDegrees = std::clamp(m_runtimeCameraFovDegrees, 30.0f, 120.0f);
-    m_runtimeCameraNearPlane = std::clamp(m_runtimeCameraNearPlane, 0.01f, 5.0f);
-    m_runtimeCameraFarPlane = std::max(m_runtimeCameraNearPlane + 1.0f, m_runtimeCameraFarPlane);
-    m_runtimeSSAORadius = std::clamp(m_runtimeSSAORadius, 0.01f, 0.50f);
-    m_runtimeSSAOBias = std::clamp(m_runtimeSSAOBias, 0.0f, 0.10f);
-    m_runtimeSSAOSampleCount = std::clamp(m_runtimeSSAOSampleCount, 0, 64);
-    m_runtimeSSAOPower = std::clamp(m_runtimeSSAOPower, 0.5f, 4.0f);
+    m_runtimeSettings.cameraFovDegrees = std::clamp(m_runtimeSettings.cameraFovDegrees, 30.0f, 120.0f);
+    m_runtimeSettings.cameraNearPlane = std::clamp(m_runtimeSettings.cameraNearPlane, 0.01f, 5.0f);
+    m_runtimeSettings.cameraFarPlane =
+        std::max(m_runtimeSettings.cameraNearPlane + 1.0f, m_runtimeSettings.cameraFarPlane);
+    m_runtimeSettings.ssaoRadius = std::clamp(m_runtimeSettings.ssaoRadius, 0.01f, 0.50f);
+    m_runtimeSettings.ssaoBias = std::clamp(m_runtimeSettings.ssaoBias, 0.0f, 0.10f);
+    m_runtimeSettings.ssaoSampleCount = std::clamp(m_runtimeSettings.ssaoSampleCount, 0, 64);
+    m_runtimeSettings.ssaoPower = std::clamp(m_runtimeSettings.ssaoPower, 0.5f, 4.0f);
 
-    const float fovYRadians = DegreesToRadians(m_runtimeCameraFovDegrees);
+    const float fovYRadians = DegreesToRadians(m_runtimeSettings.cameraFovDegrees);
     const float tanHalfFov = std::tan(fovYRadians * 0.5f);
-    const float nearPlane = m_runtimeCameraNearPlane;
-    const float farPlane = m_runtimeCameraFarPlane;
+    const float nearPlane = m_runtimeSettings.cameraNearPlane;
+    const float farPlane = m_runtimeSettings.cameraFarPlane;
     m_sceneCamera->SetPerspective(fovYRadians, aspectRatio, nearPlane, farPlane);
-
-    const std::array<float, 3> finalForward = MakeForwardVector(m_freeLookYawRadians, m_freeLookPitchRadians);
-    const std::array<float, 3> finalTarget = {
-        m_freeLookPosition[0] + finalForward[0],
-        m_freeLookPosition[1] + finalForward[1],
-        m_freeLookPosition[2] + finalForward[2],
-    };
-    m_sceneCamera->SetLookAt(m_freeLookPosition, finalTarget, {0.0f, 1.0f, 0.0f});
+    m_freeLookCamera.ApplyToCamera(*m_sceneCamera);
 
     auto* frameConstants = static_cast<GPUFrameConstants*>(frameConstantsBuffer->Map());
     WEST_CHECK(frameConstants != nullptr, "Failed to map frame constants buffer");
     std::memcpy(frameConstants->viewProjection, m_sceneCamera->GetViewProjectionMatrix().data(),
                 sizeof(frameConstants->viewProjection));
     const std::array<float, 3>& eye = m_sceneCamera->GetPosition();
-    const std::array<float, 3> cameraForward = MakeForwardVector(m_freeLookYawRadians, m_freeLookPitchRadians);
-    const std::array<float, 3> cameraRight = Normalize3(Cross3(cameraForward, {0.0f, 1.0f, 0.0f}));
-    const std::array<float, 3> cameraUp = Normalize3(Cross3(cameraRight, cameraForward));
+    const std::array<float, 3> cameraForward = m_freeLookCamera.GetForward();
+    const std::array<float, 3> cameraRight = m_freeLookCamera.GetRight();
+    const std::array<float, 3> cameraUp = m_freeLookCamera.GetUp();
     frameConstants->cameraPosition[0] = eye[0];
     frameConstants->cameraPosition[1] = eye[1];
     frameConstants->cameraPosition[2] = eye[2];
@@ -3467,20 +2913,20 @@ void Win32Application::RenderFrame()
     frameConstants->cameraFrustumParams[3] = 0.0f;
 
     const std::array<float, 3> lightDirection =
-        MakeDirectionalLightVector(m_runtimeLightAzimuthDegrees, m_runtimeLightElevationDegrees);
+        MakeDirectionalLightVector(m_runtimeSettings.lightAzimuthDegrees, m_runtimeSettings.lightElevationDegrees);
     frameConstants->lightDirection[0] = lightDirection[0];
     frameConstants->lightDirection[1] = lightDirection[1];
     frameConstants->lightDirection[2] = lightDirection[2];
     frameConstants->lightDirection[3] = 0.0f;
 
-    frameConstants->lightColor[0] = m_runtimeLightIntensity;
-    frameConstants->lightColor[1] = m_runtimeLightIntensity * 0.9423f;
-    frameConstants->lightColor[2] = m_runtimeLightIntensity * 0.8654f;
+    frameConstants->lightColor[0] = m_runtimeSettings.lightIntensity;
+    frameConstants->lightColor[1] = m_runtimeSettings.lightIntensity * 0.9423f;
+    frameConstants->lightColor[2] = m_runtimeSettings.lightIntensity * 0.8654f;
     frameConstants->lightColor[3] = 1.0f;
 
-    frameConstants->ambientColor[0] = m_runtimeEnvironmentIntensity;
-    frameConstants->ambientColor[1] = m_runtimeEnvironmentIntensity;
-    frameConstants->ambientColor[2] = m_runtimeEnvironmentIntensity;
+    frameConstants->ambientColor[0] = m_runtimeSettings.environmentIntensity;
+    frameConstants->ambientColor[1] = m_runtimeSettings.environmentIntensity;
+    frameConstants->ambientColor[2] = m_runtimeSettings.environmentIntensity;
     frameConstants->ambientColor[3] = 1.0f;
     frameConstants->skyZenithColor[0] = 0.09f;
     frameConstants->skyZenithColor[1] = 0.20f;
@@ -3512,33 +2958,33 @@ void Win32Application::RenderFrame()
         sceneCenter[1] - (lightDirection[1] * sceneRadius * 2.0f),
         sceneCenter[2] - (lightDirection[2] * sceneRadius * 2.0f),
     };
-    const std::array<float, 3> lightUp = std::abs(Dot3(lightDirection, {0.0f, 1.0f, 0.0f})) > 0.95f
+    const std::array<float, 3> lightUp = std::abs(scene::Dot3(lightDirection, {0.0f, 1.0f, 0.0f})) > 0.95f
                                              ? std::array<float, 3>{0.0f, 0.0f, 1.0f}
                                              : std::array<float, 3>{0.0f, 1.0f, 0.0f};
-    const std::array<float, 16> lightView = CreateLookAtRH(lightEye, sceneCenter, lightUp);
+    const std::array<float, 16> lightView = scene::CreateLookAtRH(lightEye, sceneCenter, lightUp);
     const std::array<float, 16> lightProjection =
         CreateOrthographicOffCenterRH(-sceneRadius, sceneRadius, -sceneRadius, sceneRadius, 0.5f, sceneRadius * 4.5f);
-    const std::array<float, 16> lightViewProjection = MultiplyMatrix(lightView, lightProjection);
+    const std::array<float, 16> lightViewProjection = scene::MultiplyMatrix4x4(lightView, lightProjection);
     std::memcpy(frameConstants->lightViewProjection, lightViewProjection.data(),
                 sizeof(frameConstants->lightViewProjection));
-    frameConstants->shadowParams[0] = m_runtimeShadowBias;
-    frameConstants->shadowParams[1] = m_runtimeShadowNormalBias;
+    frameConstants->shadowParams[0] = m_runtimeSettings.shadowBias;
+    frameConstants->shadowParams[1] = m_runtimeSettings.shadowNormalBias;
     frameConstants->shadowParams[2] = 1.0f / 2048.0f;
     frameConstants->shadowParams[3] = 1.0f / 2048.0f;
-    frameConstants->renderFeatureFlags[0] = m_runtimeShadowsEnabled ? 1.0f : 0.0f;
-    frameConstants->renderFeatureFlags[1] = m_runtimeSSAOEnabled ? 1.0f : 0.0f;
-    frameConstants->renderFeatureFlags[2] = m_runtimeIBLEnabled ? 1.0f : 0.0f;
-    frameConstants->renderFeatureFlags[3] = m_runtimeAlphaDiscardEnabled ? 1.0f : 0.0f;
-    frameConstants->materialParams[0] = m_runtimeDiffuseWeight;
-    frameConstants->materialParams[1] = m_runtimeSpecularWeight;
+    frameConstants->renderFeatureFlags[0] = m_runtimeSettings.shadowsEnabled ? 1.0f : 0.0f;
+    frameConstants->renderFeatureFlags[1] = m_runtimeSettings.ssaoEnabled ? 1.0f : 0.0f;
+    frameConstants->renderFeatureFlags[2] = m_runtimeSettings.iblEnabled ? 1.0f : 0.0f;
+    frameConstants->renderFeatureFlags[3] = m_runtimeSettings.alphaDiscardEnabled ? 1.0f : 0.0f;
+    frameConstants->materialParams[0] = m_runtimeSettings.diffuseWeight;
+    frameConstants->materialParams[1] = m_runtimeSettings.specularWeight;
     frameConstants->materialParams[2] = 0.0f;
-    frameConstants->materialParams[3] = m_runtimeTexturesEnabled ? 1.0f : 0.0f;
-    frameConstants->pbrParams[0] = m_runtimeMetallicScale;
-    frameConstants->pbrParams[1] = m_runtimeRoughnessScale;
-    frameConstants->ssaoParams[0] = m_runtimeSSAORadius;
-    frameConstants->ssaoParams[1] = m_runtimeSSAOBias;
-    frameConstants->ssaoParams[2] = static_cast<float>(m_runtimeSSAOSampleCount);
-    frameConstants->ssaoParams[3] = m_runtimeSSAOPower;
+    frameConstants->materialParams[3] = m_runtimeSettings.texturesEnabled ? 1.0f : 0.0f;
+    frameConstants->pbrParams[0] = m_runtimeSettings.metallicScale;
+    frameConstants->pbrParams[1] = m_runtimeSettings.roughnessScale;
+    frameConstants->ssaoParams[0] = m_runtimeSettings.ssaoRadius;
+    frameConstants->ssaoParams[1] = m_runtimeSettings.ssaoBias;
+    frameConstants->ssaoParams[2] = static_cast<float>(m_runtimeSettings.ssaoSampleCount);
+    frameConstants->ssaoParams[3] = m_runtimeSettings.ssaoPower;
     frameConstantsBuffer->Unmap();
 
     const rhi::RHIResourceState backBufferInitialState =
@@ -3598,9 +3044,9 @@ void Win32Application::RenderFrame()
     m_deferredLightingPass->SetIBLTextures(m_frameIBLPrefilteredHandle, m_frameIBLIrradianceHandle,
                                            m_frameIBLBrdfLutHandle);
     m_bokehDOFPass->SetFrameData(m_frameConstantsBufferHandle);
-    m_toneMappingPass->SetPostSettings(m_runtimePostSettings);
-    render::BokehDOFPass::Settings effectiveBokehSettings = m_runtimeBokehSettings;
-    if (!m_runtimeBokehEnabled)
+    m_toneMappingPass->SetPostSettings(m_runtimeSettings.post);
+    render::BokehDOFPass::Settings effectiveBokehSettings = m_runtimeSettings.bokeh;
+    if (!m_runtimeSettings.bokehEnabled)
     {
         effectiveBokehSettings.intensity = 0.0f;
     }
@@ -3823,7 +3269,8 @@ void Win32Application::EnsureFrameGraph(rhi::IRHITexture* backBuffer, rhi::RHIRe
         m_shadowMapPass->ConfigureTarget(m_frameShadowMapHandle);
         m_gBufferPass->ConfigureTargets(m_frameGBufferPositionHandle, m_frameGBufferNormalHandle,
                                         m_frameGBufferAlbedoHandle, m_frameSceneDepthHandle);
-        m_ssaoPass->ConfigureTargets(m_frameSceneDepthHandle, m_frameGBufferNormalHandle, m_frameAmbientOcclusionHandle);
+        m_ssaoPass->ConfigureTargets(m_frameSceneDepthHandle, m_frameGBufferNormalHandle,
+                                     m_frameAmbientOcclusionHandle);
         m_deferredLightingPass->ConfigureTargets(m_frameGBufferPositionHandle, m_frameGBufferNormalHandle,
                                                  m_frameGBufferAlbedoHandle, m_frameShadowMapHandle,
                                                  m_frameAmbientOcclusionHandle, m_frameSceneColorHandle);
@@ -4098,9 +3545,14 @@ void Win32Application::ShutdownRHI()
 }
 
 // ── Application Factory ──────────────────────────────────────────────────
+std::unique_ptr<IApplication> CreateApplication(const ApplicationDesc& desc)
+{
+    return std::make_unique<Win32Application>(desc);
+}
+
 std::unique_ptr<IApplication> CreateApplication()
 {
-    return std::make_unique<Win32Application>();
+    return CreateApplication(ApplicationDesc{});
 }
 
 } // namespace west
