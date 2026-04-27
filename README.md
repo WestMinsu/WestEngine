@@ -276,16 +276,20 @@ cmake --preset default
 
 # Build (Release)
 cmake --build build --config Release -j
+```
 
 ### 실행
+
 ```powershell
 # DX12 백엔드 (기본)
 build\bin\Release\west_engine.exe
 
 # Vulkan 백엔드
 build\bin\Release\west_engine.exe vulkan
+```
 
 ### 조작키
+
 | 키 | 기능 |
 |---|---|
 | `F1` | ImGui 패널 토글 |
