@@ -6,12 +6,6 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/DirectX 12-green?style=flat-square" alt="DX12">
-  <img src="https://img.shields.io/badge/Vulkan-red?style=flat-square" alt="Vulkan">
-  <img src="https://img.shields.io/badge/Shader-Slang-orange?style=flat-square" alt="Slang">
-</p>
-
-<p align="center">
   <img src="./images/bistro.png" width="900" alt="WestEngine Bistro Scene">
 </p>
 
