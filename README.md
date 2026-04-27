@@ -12,6 +12,10 @@
   <img src="https://img.shields.io/badge/Shader-Slang-orange?style=flat-square" alt="Slang">
 </p>
 
+<p align="center">
+  <img src="./docs/images/bistro.png" width="900" alt="WestEngine Bistro Scene">
+</p>
+
 ---
 
 ## 프로젝트 소개
