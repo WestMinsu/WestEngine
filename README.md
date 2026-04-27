@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="./docs/images/bistro.png" width="900" alt="WestEngine Bistro Scene">
+  <img src="./images/bistro.png" width="900" alt="WestEngine Bistro Scene">
 </p>
 
 ---
