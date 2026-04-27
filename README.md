@@ -227,17 +227,13 @@ WestEngine/
 
 ### Bistro Scene 로딩 최적화
 
-| 측정 항목 | Before | After |
-|---|---:|---:|
-| Mesh/Instance 유닛 | 22,396 | **128** (merged) |
-| Debug Geometry Upload | 27,153 ms | **33.72 ms** |
-| Release DX12 Startup (texture cache + batch staging) | 6,
-
 | 최적화 단계 | DX12 | Vulkan |
 |---|---:|---:|
 | 최적화 전 (캐시 OFF, 배치 OFF) | 31,185 ms | 31,013 ms |
 | + Texture Cache + Batch Upload | **2,406 ms** | **2,223 ms** |
 | + 1024px 텍스처 해상도 제한 | **1,162 ms** | **997 ms** |
+
+- Mesh/Instance 유닛: 22,396 → **128** (material + transform 기준 자동 merge)
 
 ### GPU-Driven Evidence
 
@@ -280,20 +276,16 @@ cmake --preset default
 
 # Build (Release)
 cmake --build build --config Release -j
-```
 
 ### 실행
-
 ```powershell
 # DX12 백엔드 (기본)
 build\bin\Release\west_engine.exe
 
 # Vulkan 백엔드
 build\bin\Release\west_engine.exe vulkan
-```
 
 ### 조작키
-
 | 키 | 기능 |
 |---|---|
 | `F1` | ImGui 패널 토글 |
