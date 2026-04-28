@@ -258,6 +258,24 @@ WestEngine/
 - **Command:** `--benchmark-runtime`
 - **Sample:** warm-up 120 frames 이후 600 frames 측정, 3회 반복 중 median 값
 
+#### Runtime Rendering Optimization Comparison
+
+비교 기준:
+
+- **Baseline:** `--disable-scene-cache --disable-scene-merge --disable-gpu-driven-scene`
+
+| Backend | Path | Draw Units | GBuffer Submission | Avg FPS | CPU Avg | CPU P95 | GPU Avg | GPU P95 |
+|---|---|---:|---|---:|---:|---:|---:|---:|
+| **DX12** | Baseline | 22,396 | CPU direct draw loop | 174.3 | 5.736 ms | 9.447 ms | 4.207 ms | 4.552 ms |
+| **DX12** | Optimized | 128 | GPU-driven indirect | **266.4** | **3.754 ms** | **4.075 ms** | **3.714 ms** | **4.047 ms** |
+| **Vulkan** | Baseline | 22,396 | CPU direct draw loop | 191.1 | 5.232 ms | 5.797 ms | 4.497 ms | 4.720 ms |
+| **Vulkan** | Optimized | 128 | GPU-driven indirect | **295.1** | **3.389 ms** | **3.550 ms** | **3.356 ms** | **3.489 ms** |
+
+- DX12: FPS **+52.8%**, CPU Avg **-34.6%**, CPU P95 **-56.9%**, GPU Avg **-11.7%**
+- Vulkan: FPS **+54.4%**, CPU Avg **-35.2%**, CPU P95 **-38.8%**, GPU Avg **-25.4%**
+
+#### Final Optimized Path
+
 | Backend | Avg FPS | CPU Avg | CPU P95 | GPU Avg | GPU P95 |
 |---|---:|---:|---:|---:|---:|
 | **DX12** | **266.4** | **3.754 ms** | **4.075 ms** | **3.714 ms** | **4.047 ms** |
