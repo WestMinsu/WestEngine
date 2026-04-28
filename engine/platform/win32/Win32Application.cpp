@@ -90,6 +90,37 @@ const char* BuildConfigName()
 #endif
 }
 
+struct RuntimeBenchmarkStats
+{
+    float averageMs = 0.0f;
+    float p95Ms = 0.0f;
+};
+
+RuntimeBenchmarkStats ComputeRuntimeBenchmarkStats(std::span<const float> samples)
+{
+    if (samples.empty())
+    {
+        return {};
+    }
+
+    std::vector<float> sorted(samples.begin(), samples.end());
+    std::sort(sorted.begin(), sorted.end());
+
+    float sumMs = 0.0f;
+    for (const float sample : sorted)
+    {
+        sumMs += sample;
+    }
+
+    const size_t p95Index =
+        std::min(sorted.size() - 1, static_cast<size_t>(std::ceil(static_cast<float>(sorted.size()) * 0.95f)) - 1u);
+
+    return RuntimeBenchmarkStats{
+        .averageMs = sumMs / static_cast<float>(sorted.size()),
+        .p95Ms = sorted[p95Index],
+    };
+}
+
 [[nodiscard]] bool HasWindowInputFocus(HWND hwnd)
 {
     if (hwnd == nullptr)
@@ -720,6 +751,10 @@ bool Win32Application::Initialize()
         {
             m_enableGPUDrivenScene = false;
         }
+        else if (arg == "--benchmark-runtime")
+        {
+            m_runtimeBenchmark.enabled = true;
+        }
 
         static constexpr std::string_view kScenePrefix = "--scene=";
         if (arg.starts_with(kScenePrefix))
@@ -791,6 +826,44 @@ bool Win32Application::Initialize()
             }
         }
 
+        static constexpr std::string_view kBenchmarkWarmupPrefix = "--benchmark-warmup=";
+        if (arg.starts_with(kBenchmarkWarmupPrefix))
+        {
+            const std::string_view warmupText = arg.substr(kBenchmarkWarmupPrefix.size());
+            uint32 parsedWarmupFrames = 0;
+            const char* begin = warmupText.data();
+            const char* end = begin + warmupText.size();
+            const auto [ptr, ec] = std::from_chars(begin, end, parsedWarmupFrames);
+            if (ec == std::errc{} && ptr == end)
+            {
+                m_runtimeBenchmark.warmupFrames = parsedWarmupFrames;
+                m_runtimeBenchmark.enabled = true;
+            }
+            else
+            {
+                WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid benchmark warmup argument: {}", arg);
+            }
+        }
+
+        static constexpr std::string_view kBenchmarkSamplesPrefix = "--benchmark-samples=";
+        if (arg.starts_with(kBenchmarkSamplesPrefix))
+        {
+            const std::string_view samplesText = arg.substr(kBenchmarkSamplesPrefix.size());
+            uint32 parsedSampleFrames = 0;
+            const char* begin = samplesText.data();
+            const char* end = begin + samplesText.size();
+            const auto [ptr, ec] = std::from_chars(begin, end, parsedSampleFrames);
+            if (ec == std::errc{} && ptr == end && parsedSampleFrames > 0)
+            {
+                m_runtimeBenchmark.sampleFrames = parsedSampleFrames;
+                m_runtimeBenchmark.enabled = true;
+            }
+            else
+            {
+                WEST_LOG_WARNING(LogCategory::Core, "Ignoring invalid benchmark sample argument: {}", arg);
+            }
+        }
+
         if (arg == "--smoke-test")
         {
             m_maxFrameCount = 3;
@@ -827,6 +900,21 @@ bool Win32Application::Initialize()
         WEST_LOG_WARNING(LogCategory::Core, "Ignoring --dx12-gbv because the active backend is not DX12.");
         m_enableDX12GPUBasedValidation = false;
     }
+
+    if (m_runtimeBenchmark.enabled)
+    {
+        m_runtimeBenchmark.cpuFrameMs.reserve(m_runtimeBenchmark.sampleFrames);
+        m_runtimeBenchmark.gpuFrameMs.reserve(m_runtimeBenchmark.sampleFrames);
+        const uint32 benchmarkFrameLimit = m_runtimeBenchmark.warmupFrames + m_runtimeBenchmark.sampleFrames;
+        if (m_maxFrameCount == 0 || m_maxFrameCount < benchmarkFrameLimit)
+        {
+            m_maxFrameCount = benchmarkFrameLimit;
+        }
+        Logger::Log(LogLevel::Info, LogCategory::Core,
+                    std::format("Runtime benchmark enabled: warmupFrames={}, sampleFrames={}.",
+                                m_runtimeBenchmark.warmupFrames, m_runtimeBenchmark.sampleFrames));
+    }
+
     Logger::Log(LogLevel::Info, LogCategory::Core,
                 std::format("Launch config: build={}, backend={}, validation={}, dx12GBV={}, gpuCrashDiag={}, "
                             "frameLimit={}, scenePreset={}, sceneCache={}, sceneMerge={}, sceneBatchUpload={}, "
@@ -2218,6 +2306,52 @@ bool Win32Application::ConsumeKeyPress(int virtualKey)
     return pressed;
 }
 
+void Win32Application::RecordRuntimeBenchmarkFrame(float cpuFrameMs)
+{
+    if (!m_runtimeBenchmark.enabled || m_runtimeBenchmark.logged || m_frameCount < m_runtimeBenchmark.warmupFrames)
+    {
+        return;
+    }
+
+    if (m_runtimeBenchmark.cpuFrameMs.size() < m_runtimeBenchmark.sampleFrames)
+    {
+        m_runtimeBenchmark.cpuFrameMs.push_back(cpuFrameMs);
+    }
+
+    if (m_frameTelemetry != nullptr && m_runtimeBenchmark.gpuFrameMs.size() < m_runtimeBenchmark.sampleFrames)
+    {
+        const editor::FrameTelemetryStats& stats = m_frameTelemetry->GetStats();
+        if (stats.hasGpuFrameTime)
+        {
+            m_runtimeBenchmark.gpuFrameMs.push_back(stats.latestGpuFrameMs);
+        }
+    }
+
+    if (m_runtimeBenchmark.cpuFrameMs.size() >= m_runtimeBenchmark.sampleFrames &&
+        (m_runtimeBenchmark.gpuFrameMs.size() >= m_runtimeBenchmark.sampleFrames ||
+         m_frameCount + 1u >= m_maxFrameCount))
+    {
+        LogRuntimeBenchmarkResult();
+        m_runtimeBenchmark.logged = true;
+    }
+}
+
+void Win32Application::LogRuntimeBenchmarkResult() const
+{
+    const RuntimeBenchmarkStats cpuStats = ComputeRuntimeBenchmarkStats(m_runtimeBenchmark.cpuFrameMs);
+    const RuntimeBenchmarkStats gpuStats = ComputeRuntimeBenchmarkStats(m_runtimeBenchmark.gpuFrameMs);
+    const float averageFps = cpuStats.averageMs > 0.0f ? 1000.0f / cpuStats.averageMs : 0.0f;
+
+    Logger::Log(LogLevel::Info, LogCategory::Core,
+                std::format("Runtime benchmark result: backend={}, resolution={}x{}, warmupFrames={}, "
+                            "cpuSamples={}, gpuSamples={}, avgFPS={:.1f}, cpuAvg={:.3f} ms, cpuP95={:.3f} ms, "
+                            "gpuAvg={:.3f} ms, gpuP95={:.3f} ms.",
+                            BackendName(m_backend), m_window != nullptr ? m_window->GetWidth() : 0u,
+                            m_window != nullptr ? m_window->GetHeight() : 0u, m_runtimeBenchmark.warmupFrames,
+                            m_runtimeBenchmark.cpuFrameMs.size(), m_runtimeBenchmark.gpuFrameMs.size(), averageFps,
+                            cpuStats.averageMs, cpuStats.p95Ms, gpuStats.averageMs, gpuStats.p95Ms));
+}
+
 void Win32Application::ApplyPostPreset(uint32 presetIndex, bool logChange)
 {
     m_runtimeSettings.postPresetIndex = std::min<uint32>(presetIndex, editor::GetPostPresetCount() - 1u);
@@ -2794,7 +2928,7 @@ void Win32Application::RenderFrame()
         m_gpuDrivenCountReadbackBuffers[frameIndex]->Unmap();
         m_gpuDrivenReadbackPending[frameIndex] = false;
 
-        if (!m_gpuDrivenVisibilityLogged || m_maxFrameCount > 0 ||
+        if (!m_gpuDrivenVisibilityLogged || (m_maxFrameCount > 0 && !m_runtimeBenchmark.enabled) ||
             m_lastLoggedVisibleCount != m_lastGPUDrivenVisibleCount)
         {
             Logger::Log(LogLevel::Info, LogCategory::Scene,
@@ -2873,6 +3007,7 @@ void Win32Application::RenderFrame()
     {
         m_gpuTimerManager->ConsumeCompletedFrame(frameIndex, *m_frameTelemetry);
     }
+    RecordRuntimeBenchmarkFrame(deltaSeconds * 1000.0f);
 
     const HWND hwnd = static_cast<HWND>(m_window->GetNativeHandle());
     const editor::ImGuiRenderer::InputState imguiInput =

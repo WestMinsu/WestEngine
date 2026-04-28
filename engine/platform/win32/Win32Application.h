@@ -120,6 +120,8 @@ private:
     void BuildTelemetryOverlay();
     void BuildImGuiControlPanel();
     [[nodiscard]] bool ConsumeKeyPress(int virtualKey);
+    void RecordRuntimeBenchmarkFrame(float cpuFrameMs);
+    void LogRuntimeBenchmarkResult() const;
     void ApplyPostPreset(uint32 presetIndex, bool logChange);
     void LogRuntimePostControlsHelp() const;
     void LogRuntimePostState(const char* reason) const;
@@ -142,6 +144,17 @@ private:
     bool m_enableGPUDrivenScene = true;
     std::string m_baseWindowTitle = "WestEngine";
     ApplicationSceneDesc m_sceneDesc;
+
+    struct RuntimeBenchmarkState
+    {
+        bool enabled = false;
+        bool logged = false;
+        uint32 warmupFrames = 120;
+        uint32 sampleFrames = 600;
+        std::vector<float> cpuFrameMs;
+        std::vector<float> gpuFrameMs;
+    };
+    RuntimeBenchmarkState m_runtimeBenchmark;
 
     // ── RHI ───────────────────────────────────────────────────────────
     rhi::RHIBackend m_backend = rhi::RHIBackend::DX12;

@@ -251,16 +251,17 @@ WestEngine/
 
 - **Build:** Release
 - **Scene:** Amazon Lumberyard Bistro, 1024px material texture cap, GPU-driven path ON
-- **Resolution:** 1920x1061 client area
+- **Resolution:** 1920x1080 client area
 - **GPU:** NVIDIA GeForce RTX 3060
 - **Validation / GPU crash diagnostics:** OFF
 - **VSync:** OFF (현재 기본 swapchain 설정)
+- **Command:** `--benchmark-runtime`
 - **Sample:** warm-up 120 frames 이후 600 frames 측정, 3회 반복 중 median 값
 
 | Backend | Avg FPS | CPU Avg | CPU P95 | GPU Avg | GPU P95 |
 |---|---:|---:|---:|---:|---:|
-| **DX12** | **272.3** | **3.672 ms** | **4.016 ms** | **3.635 ms** | **3.966 ms** |
-| **Vulkan** | **279.4** | **3.579 ms** | **3.923 ms** | **3.464 ms** | **3.815 ms** |
+| **DX12** | **266.4** | **3.754 ms** | **4.075 ms** | **3.714 ms** | **4.047 ms** |
+| **Vulkan** | **295.1** | **3.389 ms** | **3.550 ms** | **3.356 ms** | **3.489 ms** |
 
 > P95는 측정 프레임 중 95%가 해당 시간 이하로 완료되었음을 의미합니다.
 
