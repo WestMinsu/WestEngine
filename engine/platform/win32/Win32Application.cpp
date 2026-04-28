@@ -90,6 +90,27 @@ const char* BuildConfigName()
 #endif
 }
 
+[[nodiscard]] bool HasWindowInputFocus(HWND hwnd)
+{
+    if (hwnd == nullptr)
+    {
+        return false;
+    }
+
+    const HWND foregroundWindow = GetForegroundWindow();
+    if (foregroundWindow == hwnd)
+    {
+        return true;
+    }
+    if (foregroundWindow == nullptr)
+    {
+        return false;
+    }
+
+    return GetAncestor(foregroundWindow, GA_ROOT) == hwnd ||
+           GetAncestor(foregroundWindow, GA_ROOTOWNER) == hwnd;
+}
+
 [[nodiscard]] bool ContainsCaseInsensitive(std::string_view text, std::string_view needle)
 {
     auto toLower = [](char value) { return static_cast<char>(std::tolower(static_cast<unsigned char>(value))); };
@@ -110,14 +131,15 @@ const char* BuildConfigName()
     input.deltaSeconds = deltaSeconds;
     input.displayWidth = static_cast<float>(width);
     input.displayHeight = static_cast<float>(height);
-    input.mouseButtons[0] = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    input.mouseButtons[1] = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
-    input.mouseButtons[2] = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
-    if (hwnd == nullptr)
+    if (!HasWindowInputFocus(hwnd))
     {
         return input;
     }
+
+    input.mouseButtons[0] = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    input.mouseButtons[1] = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+    input.mouseButtons[2] = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
 
     POINT cursorPosition{};
     if (GetCursorPos(&cursorPosition) == 0 || ScreenToClient(hwnd, &cursorPosition) == 0)
@@ -2114,8 +2136,9 @@ void Win32Application::UpdateFreeLookCamera(float deltaSeconds, bool blockMouseL
     WEST_ASSERT(m_window != nullptr);
 
     const HWND hwnd = static_cast<HWND>(m_window->GetNativeHandle());
-    if (hwnd == nullptr)
+    if (!HasWindowInputFocus(hwnd))
     {
+        m_hasLastMousePosition = false;
         return;
     }
 
@@ -2181,6 +2204,13 @@ void Win32Application::UpdateFreeLookCamera(float deltaSeconds, bool blockMouseL
 bool Win32Application::ConsumeKeyPress(int virtualKey)
 {
     WEST_ASSERT(virtualKey >= 0 && virtualKey < static_cast<int>(m_runtimeSettings.keyState.size()));
+
+    const HWND hwnd = m_window ? static_cast<HWND>(m_window->GetNativeHandle()) : nullptr;
+    if (!HasWindowInputFocus(hwnd))
+    {
+        m_runtimeSettings.keyState[virtualKey] = false;
+        return false;
+    }
 
     const bool isDown = (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
     const bool pressed = isDown && !m_runtimeSettings.keyState[virtualKey];
