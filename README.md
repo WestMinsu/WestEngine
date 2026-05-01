@@ -47,7 +47,7 @@ https://casual-effects.com/data/ 의 Amazon Lumberyard Bistro 모델을 사용�
  Application / Win32 Runtime
           │
           ▼
-  ┌─ west_rhi_interface ─────────────────────────────┐
+  ┌─ west_rhi_interface ──────────────────────────────┐
   │  IRHIDevice · IRHICommandList · IRHIFence         │
   │  IRHISwapChain · IRHIPipeline · IRHIBuffer        │
   │  BindlessIndex (Resource / Sampler namespace)     │
